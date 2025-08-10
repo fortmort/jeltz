@@ -1,0 +1,23 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/ruff.sh"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/eof.sh"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/hooks/7bit.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
