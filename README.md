@@ -17,4 +17,4 @@ Claude Code is consistently inconsistent:
   - Mixed tabs and spaces, random blank lines
   - Files missing EOF newlines
 
-These hooks try to make Claude Code more deterministic: less Vogon poetry, more reproducible prose.
+These hooks and skills try to make Claude Code more deterministic: less Vogon poetry, more reproducible prose.
