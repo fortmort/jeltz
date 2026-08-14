@@ -7,15 +7,15 @@
 # to common text file extensions ... just in case.
 
 input=$(cat)
-if command -v ed > /dev/null 2>&1; then
+if command -v ed >/dev/null 2>&1; then
     if echo "$input" | jq -e '
         .tool_response.filePath
         | test("\\.sh$|\\.md$|\\.txt$|\\.json$|\\.toml$|\\.yaml$|\\.ini$")
-    ' > /dev/null 2>&1; then
+    ' >/dev/null 2>&1; then
         filepath=$(echo "$input" | jq -r '.tool_response.filePath')
         if [ -f "$filepath" ]; then
             echo "Running ed on $filepath"
-            ed -s "$filepath" <<< w
+            ed -s "$filepath" <<<w
         fi
     fi
 else

@@ -62,39 +62,40 @@ RETRY_WINDOW="${LARGE_EDIT_RETRY_WINDOW:-120}"
 CLEANUP_BATCH="${LARGE_EDIT_CLEANUP_BATCH:-20}"
 
 # Logging (syslog via logger)
-LOG_LEVEL="${LARGE_EDIT_LOG_LEVEL:-off}"   # off|error|warn|info|debug
+LOG_LEVEL="${LARGE_EDIT_LOG_LEVEL:-off}" # off|error|warn|info|debug
 LOG_TAG="${LARGE_EDIT_LOG_TAG:-claude.large-edit-guard}"
 
 log_level_num() {
-  case "$1" in
-    off)   echo 0 ;;
-    error) echo 1 ;;
-    warn)  echo 2 ;;
-    info)  echo 3 ;;
-    debug) echo 4 ;;
-    *)     echo 0 ;;
-  esac
+    case "$1" in
+        off) echo 0 ;;
+        error) echo 1 ;;
+        warn) echo 2 ;;
+        info) echo 3 ;;
+        debug) echo 4 ;;
+        *) echo 0 ;;
+    esac
 }
 
 LOG_LEVEL_N="$(log_level_num "$LOG_LEVEL")"
 
 log_syslog() {
-  # $1 = severity (error|warn|info|debug), $2... = message
-  local sev="$1"; shift
-  local pri="user.notice"
-  case "$sev" in
-    error) pri="user.err" ;;
-    warn)  pri="user.warning" ;;
-    info)  pri="user.info" ;;
-    debug) pri="user.debug" ;;
-  esac
-  # Avoid stdout; logger writes to syslog/journald.
-  logger -t "$LOG_TAG" -p "$pri" -- "$*"
+    # $1 = severity (error|warn|info|debug), $2... = message
+    local sev="$1"
+    shift
+    local pri="user.notice"
+    case "$sev" in
+        error) pri="user.err" ;;
+        warn) pri="user.warning" ;;
+        info) pri="user.info" ;;
+        debug) pri="user.debug" ;;
+    esac
+    # Avoid stdout; logger writes to syslog/journald.
+    logger -t "$LOG_TAG" -p "$pri" -- "$*"
 }
 
 log_error() { [[ "$LOG_LEVEL_N" -ge 1 ]] && log_syslog error "$*"; }
-log_warn()  { [[ "$LOG_LEVEL_N" -ge 2 ]] && log_syslog warn  "$*"; }
-log_info()  { [[ "$LOG_LEVEL_N" -ge 3 ]] && log_syslog info  "$*"; }
+log_warn() { [[ "$LOG_LEVEL_N" -ge 2 ]] && log_syslog warn "$*"; }
+log_info() { [[ "$LOG_LEVEL_N" -ge 3 ]] && log_syslog info "$*"; }
 log_debug() { [[ "$LOG_LEVEL_N" -ge 4 ]] && log_syslog debug "$*"; }
 
 # Cache directory (default XDG, then ~/.cache)
@@ -121,7 +122,7 @@ fi
 
 # Check if file matches any allowed patterns (skip checking)
 if [[ -n "$ALLOW_PATTERNS" ]]; then
-    IFS=':' read -ra PATTERNS <<< "$ALLOW_PATTERNS"
+    IFS=':' read -ra PATTERNS <<<"$ALLOW_PATTERNS"
     for pattern in "${PATTERNS[@]}"; do
         # shellcheck disable=SC2053
         if [[ "$FILE_PATH" == $pattern ]]; then
@@ -252,7 +253,7 @@ record_retry_token() {
 
     now=$(date +%s)
     tmp="$(mktemp "${CACHE_DIR}/.token.tmp.XXXXXX")"
-    printf '%s\n' "$now" > "$tmp"
+    printf '%s\n' "$now" >"$tmp"
     mv "$tmp" "$token_file"
     log_debug "event=token_record tool=$TOOL_NAME file=$FILE_PATH ts=$now token_file=$token_file"
 }
@@ -325,7 +326,10 @@ GUIDANCE:
 case "$TOOL_NAME" in
     Write)
         NEW_CONTENT=$(echo "$INPUT" | jq -r '.tool_input.content // empty')
-        [[ -z "$NEW_CONTENT" ]] && { log_debug "event=allow reason=empty_content tool=$TOOL_NAME file=$FILE_PATH"; exit 0; }
+        [[ -z "$NEW_CONTENT" ]] && {
+            log_debug "event=allow reason=empty_content tool=$TOOL_NAME file=$FILE_PATH"
+            exit 0
+        }
 
         NEW_LINES=$(echo "$NEW_CONTENT" | wc -l)
         NEW_BYTES=${#NEW_CONTENT}
@@ -336,7 +340,10 @@ case "$TOOL_NAME" in
         diff_rc=$?
         set -e
 
-        [[ "$diff_rc" -eq 2 ]] && { log_error "event=allow reason=diff_error tool=$TOOL_NAME file=$FILE_PATH"; exit 0; }
+        [[ "$diff_rc" -eq 2 ]] && {
+            log_error "event=allow reason=diff_error tool=$TOOL_NAME file=$FILE_PATH"
+            exit 0
+        }
 
         UNCHANGED_LINES=$(printf '%s' "$diff_out" | wc -c)
         RETAINED_PERCENT=$((UNCHANGED_LINES * 100 / OLD_LINES))
@@ -358,7 +365,10 @@ Estimated change: ${CHANGED_PERCENT}%"
 
     Edit)
         OLD_STRING=$(echo "$INPUT" | jq -r '.tool_input.old_string // empty')
-        [[ -z "$OLD_STRING" ]] && { log_debug "event=allow reason=empty_old_string tool=$TOOL_NAME file=$FILE_PATH"; exit 0; }
+        [[ -z "$OLD_STRING" ]] && {
+            log_debug "event=allow reason=empty_old_string tool=$TOOL_NAME file=$FILE_PATH"
+            exit 0
+        }
 
         OLD_STRING_BYTES=${#OLD_STRING}
         CHANGE_PERCENT=$((OLD_STRING_BYTES * 100 / OLD_BYTES))
@@ -378,10 +388,13 @@ Percentage of file: ${CHANGE_PERCENT}%"
 
     MultiEdit)
         EDIT_COUNT=$(echo "$INPUT" | jq -r '.tool_input.edits | length // 0')
-        [[ "$EDIT_COUNT" -le 0 ]] && { log_debug "event=allow reason=empty_edits tool=$TOOL_NAME file=$FILE_PATH"; exit 0; }
+        [[ "$EDIT_COUNT" -le 0 ]] && {
+            log_debug "event=allow reason=empty_edits tool=$TOOL_NAME file=$FILE_PATH"
+            exit 0
+        }
 
         TOTAL_OLD_BYTES=0
-        for ((i=0; i<EDIT_COUNT; i++)); do
+        for ((i = 0; i < EDIT_COUNT; i++)); do
             s=$(echo "$INPUT" | jq -r ".tool_input.edits[$i].old_string // empty")
             TOTAL_OLD_BYTES=$((TOTAL_OLD_BYTES + ${#s}))
         done
