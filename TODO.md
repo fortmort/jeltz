@@ -15,7 +15,7 @@ a rulebook governing `jeltz` itself.
 Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer. Only three can enforce the gate.
 
-Status: T1-T5 complete; next task is T6.
+Status: T1-T6 complete; next task is T7.
 
 ---
 
@@ -656,25 +656,85 @@ Decisions recorded:
 
 ### Phase 2 - the review engine
 
-#### T6. Packet builder and disposable review worktree
-- Packet: TODO ref (optional per Q1), WIP message, diff, untracked list,
-  `make verify` tail. Enforce the size ceiling.
-- Worktree: materialize the reviewed state including uncommitted and untracked
-  changes, commit the WIP inside it, guarantee cleanup on crash. Evaluate
-  grok's built-in `--worktree` / `--worktree-ref` as a shortcut for that host.
-- Integrity check (R7): snapshot the review checkout's tracked content and
-  untracked file set before handing it to the reviewer, and verify after.
-  Tracked-source changes **fail the review** - they do not merely warn, because
-  a verdict produced against a mutated checkout is a verdict about different
-  code. Verification artifacts and caches are allowlisted by pattern, not
-  ignored wholesale, so a novel write shows up rather than slipping through.
-- The check is host-neutral and runs in the orchestrator, so it holds for any
-  adapter, including future ones with tool surfaces nobody has audited.
-Acceptance: deterministic packet and stable diff hash for a given tree state;
-reviewer can run `make verify` to completion without tripping the check; a
-reviewer command that edits a tracked file in the review checkout fails the
-review with a specific error; no tracked source file in the developer's tree is
-modified (cache writes ignored, per D5).
+#### T6. Packet builder and disposable review worktree - DONE
+Goal: the review engine's foundation - what the reviewer sees, where it runs,
+and the mechanical enforcement of D5.
+
+Delivered: `review/packet.py`, `review/worktree.py`, and a shared
+`review/gitcmd.py` git runner; behavior pinned by 13 tests in
+`tests/test_packet.py` and 20 in `tests/test_worktree.py`, on a real-git
+`dirty_repo` fixture in `tests/conftest.py`. All `review/` modules hold the
+100% coverage gate.
+
+Behavior as specified in the original acceptance:
+- `build_packet(repo, wip_message, todo_ref=None, verify_output="",
+  size_ceiling=...)` returns a frozen, deterministic `Packet` (WIP message,
+  optional TODO ref per Q1, `git diff HEAD`, sorted untracked list, last 50
+  lines of verify output) with a `render()` for the reviewer prompt. Over
+  the ceiling it raises `PacketTooLargeError` (termination condition 4)
+  instead of truncating.
+- `tree_state_hash` / `Packet.diff_hash`: sha256 over the binary tracked
+  diff plus each untracked file's path and content digest
+  (length-delimited). Stable across rebuilds of the same tree; changes on
+  any tracked or untracked content change; gitignored files affect nothing.
+- `review_worktree(repo, wip_message)` context-manages a detached worktree:
+  applies the developer's `diff HEAD --binary`, copies untracked files,
+  commits the WIP inside with the engine's own identity and `--no-verify`
+  (consumer hooks and git config cannot block or alter materialization),
+  `--allow-empty` so a clean tree still yields a reviewable HEAD. The
+  developer's tree is never touched; cleanup (remove + prune + temp dir)
+  is unconditional in `finally`, surviving crashes and even the checkout
+  being deleted out from under it.
+- Integrity check (R7): `snapshot()` records HEAD plus the untracked set;
+  `verify_integrity()` raises `IntegrityError` on HEAD movement, any
+  tracked mutation (edit, delete, staged anything), or a novel untracked
+  write - naming the offending paths. Caches (`.venv`, `__pycache__`,
+  pytest/ruff/mypy caches, coverage artifacts) are allowlisted by explicit
+  fnmatch pattern.
+
+Decisions recorded:
+- **The consumer's .gitignore is not the allowlist.** The check lists with
+  `git status --porcelain -uall --ignored=matching`, so a write into an
+  ignored path (e.g. `*.log`) still surfaces and must pass the explicit
+  CACHE_ALLOWLIST - closing the "hide the write somewhere gitignored"
+  channel the R7 text warned about. Packet-side untracked listing keeps
+  excluding ignored files (they are not reviewed content).
+- `IntegrityError` is a distinct typed error, never a verdict, per T7's
+  requirement that a failed check cannot be recorded as an accepted review.
+- Cleanup is branch-free on purpose: `worktree remove --force` is
+  best-effort (unchecked), then always `worktree prune` + temp-dir removal;
+  `git worktree remove --force` already succeeds on a deleted checkout, so
+  a conditional fallback was unreachable code.
+- grok's built-in `--worktree` is superseded: the host-neutral worktree is
+  where the WIP commit and the integrity snapshot happen, so every adapter
+  (T8-T11) receives the same checkout; per-host worktree features go unused.
+
+Hardened after review (three blockers, all reproduced by the reviewer):
+- **The integrity check does not trust the index.** `git status` goes
+  blind when the reviewer runs `update-index --assume-unchanged` (edits,
+  deletions, and type swaps all hidden - reproduced in tests), so
+  `snapshot()` also fingerprints every file in HEAD's tree straight from
+  disk (type, content sha256, executable bit; symlinks fingerprint their
+  literal target) and `verify_integrity()` re-fingerprints and compares.
+  The status scan stays as the first-line check for staged mutations and
+  novel untracked writes.
+- **Symlinks are reviewed faithfully.** The diff hash digests an untracked
+  symlink's literal target (never the target's content - retargeting
+  between equal-content files changes the hash, and a broken link still
+  hashes), and materialization copies with `follow_symlinks=False` so the
+  reviewer sees the developer's symlink, not a regular-file copy.
+- **The hash covers the git-significant mode.** An untracked regular file
+  contributes 100755 vs 100644 alongside its content digest (second
+  review round): git commits the executable bit, so chmod +x changes the
+  WIP commit under review and must invalidate a prior review.
+- **Crash-safety is recovery, not just `finally`.** SIGKILL (what a hook
+  timeout does, R5) skips `finally` and leaks the checkout plus its git
+  registration - reproduced by killing a subprocess mid-review. Each
+  review writes a pid marker beside its checkout; `reap_stale_worktrees()`
+  removes any `jeltz-review-*` worktree whose owner is dead (missing or
+  garbage marker counts as dead, live reviews are never touched), and
+  `review_worktree()` reaps on entry so the next review self-heals. T12's
+  orchestrator should also call it at startup.
 
 #### T7. Adapter interface
 Goal: pin the contract before writing four of them.
