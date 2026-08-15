@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "verdict": "REQUIRES_CHANGES",
+  "round": 1,
+  "blockers": [
+    {
+      "id": "missing-type-hints",
+      "file": "greet.py",
+      "line": 1,
+      "claim": "greet() has no type hints on its parameter or return value",
+      "why": "CLAUDE.md requires type hints everywhere; the violation ships in the same commit as the norm"
+    },
+    {
+      "id": "print-in-production-code",
+      "file": "greet.py",
+      "line": 2,
+      "claim": "greet() uses print() instead of the logging module",
+      "why": "CLAUDE.md forbids print statements in production code and mandates logging"
+    },
+    {
+      "id": "no-tests",
+      "file": "greet.py",
+      "line": 1,
+      "claim": "greet.py has no pytest tests and no tests/ directory exists",
+      "why": "CLAUDE.md requires every module to have tests under tests/; coverage is zero"
+    }
+  ],
+  "non_blockers": [
+    {
+      "id": "greet-returns-nothing",
+      "file": "greet.py",
+      "line": 2,
+      "claim": "helper prints instead of returning the greeting string",
+      "why": "API design preference, not a stated norm; likely resolved by fixing the print blocker"
+    }
+  ]
+}

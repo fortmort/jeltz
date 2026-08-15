@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "verdict": "REQUIRES_CHANGES",
+  "round": 1,
+  "blockers": [
+    {
+      "id": "missing-type-hints",
+      "file": "greet.py",
+      "line": 1,
+      "claim": "type hints required everywhere",
+      "why": "The greet function lacks type hints for the name parameter and return type."
+    },
+    {
+      "id": "uses-print-statement",
+      "file": "greet.py",
+      "line": 2,
+      "claim": "no print statements in production code",
+      "why": "The function uses print() instead of the required logging module."
+    },
+    {
+      "id": "missing-tests",
+      "file": "greet.py",
+      "line": 1,
+      "claim": "every module must have tests under tests/",
+      "why": "There is no tests/ directory or corresponding test file for greet.py."
+    }
+  ],
+  "non_blockers": []
+}

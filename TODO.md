@@ -15,7 +15,7 @@ a rulebook governing `jeltz` itself.
 Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer. Only three can enforce the gate.
 
-Status: T1-T2 complete; next task is T3.
+Status: T1-T3 complete; next task is T4.
 
 ---
 
@@ -454,28 +454,77 @@ Decisions recorded:
 
 ### Phase 1 - the skill contract
 
-#### T3. Revise `skeptical-reviewer/SKILL.md`
+#### T3. Revise `skeptical-reviewer/SKILL.md` - DONE
 Goal: keep what works, add what automation needs.
-- Keep the committed-changes review target - it matches actual practice. Accept
-  a ref argument, defaulting to `HEAD`.
-- Add an uncommitted mode for the enforcement path, where no WIP commit exists.
-  (In the orchestrated path the worktree makes the WIP commit, so the reviewer
-  still sees a commit.)
-- Handle Q1: define behavior when no TODO item is supplied - review against
-  `CLAUDE.md` norms alone.
-- Replace `@CLAUDE.md` / `@TODO.md` with plain relative paths plus an explicit
-  "read these first" step. The `@` prefix is Claude-specific expansion; codex,
-  agy, and grok receive it as a literal string.
-- State the D5 constraint in prose: read, run, and analyze freely; never author
-  or modify code. Mechanical enforcement is T6 and R6.
-- Add a re-review mode: given prior blockers by id, judge each resolved,
-  unresolved, or regressed, and do not open unrelated new lines of attack
-  unless they are blockers.
-- Append a machine-readable verdict block: `{schema_version, verdict, round,
-  blockers: [{id, file, line, claim, why}], non_blockers: [...]}`, with `id`
-  stable across rounds.
-Acceptance: the same file produces a usable review on all four hosts, and the
-JSON block validates against T4.
+
+Delivered: rewritten `skills/skeptical-reviewer/SKILL.md`; contract pinned by
+`tests/test_reviewer_skill.py` (11 behavioral tests against the skill text,
+including parsing the embedded verdict example).
+
+The revised contract:
+- Ref argument defaulting to `HEAD`; committed mode reviews the ref's diff
+  and commit message(s).
+- Uncommitted mode (requested explicitly, or ref is the literal word
+  `uncommitted`): reviews `git diff HEAD` plus untracked files; the task
+  description stands in for the commit message.
+- Q1 handled: with no TODO item, review against `CLAUDE.md` norms alone,
+  without inventing task-level requirements.
+- All `@CLAUDE.md` / `@TODO.md` expansions replaced by a "read these files
+  first" step with plain relative paths.
+- D5 in prose: read, run, and analyze freely (cache/artifact writes OK);
+  never author or modify source, tests, or config. Restated in Hard
+  Constraints. Mechanical enforcement remains T6/R6.
+- Re-review mode: judge each prior blocker by id as resolved / unresolved /
+  regressed; ids stable across rounds; no unrelated new lines of attack
+  unless they are genuine blockers, whatever round introduced the flaw.
+- Machine-readable verdict: exactly one fenced JSON block ending the review,
+  `{schema_version: 1, verdict, round, blockers: [{id, file, line, claim,
+  why}], non_blockers: [...]}` - the verdict of record; prose is for humans.
+
+Decisions recorded:
+- **Verdict enum for the JSON block:** `ACCEPTED`,
+  `ACCEPTED_WITH_NON_BLOCKERS`, `REQUIRES_CHANGES` (machine-safe forms of
+  the three prose verdicts). T4's schema must use these.
+- **Re-review blockers carry a `disposition` field** (resolved / unresolved /
+  regressed) in the JSON block, giving T13's thrash detection structured
+  input.
+- **Invocation examples are argument-shaped, not host-shaped** - no
+  `$skill-name` / `/skill-name` prefix in the skill body, since each host
+  spells invocation differently.
+- **Both verdict arrays are always required** (empty when a category has no
+  findings) - added after the live spike caught agy omitting an empty
+  `non_blockers` key.
+- **Re-review admits any genuine blocker, whatever round introduced the
+  flaw** (added after review): restricting new findings to
+  amendment-introduced ones would suppress issues missed in round 1.
+
+Acceptance evidence (live four-host spike, 2026-08-15): the installed skill
+was run headless on claude 2.1.233, codex 0.147.0, agy 1.1.13, and grok
+1.0.4 against the same fixture commit (a `greet.py` violating three
+CLAUDE.md norms, no TODO item). All four produced a norms-only review,
+independently found the same three violations, and emitted a parseable
+verdict block with complete blocker fields. The four real verdict blocks
+are committed as `tests/fixtures/reviewer-verdicts/<host>.json`, asserted
+by `test_all_four_hosts_emitted_valid_verdicts`, and are the golden
+fixtures T4's parser must accept ("validates against T4" is closed out when
+T4's schema lands, next task).
+
+Adapter findings from the spike (feed into T8-T11):
+- **claude:** a user-scope copy of the same skill name shadows the project
+  copy in headless mode - the adapter prompt must point at the project
+  skill path explicitly (or user installs must be kept current).
+- **agy:** headless `command` permission is auto-denied (3.4 sharp edge 2
+  reconfirmed); a project `.agents/settings.json` `permissions.allow`
+  guess did NOT take (schema still unresolved, T9). Workaround that
+  produced a full review: instruct file-tool-only review. Also: agy omits
+  empty JSON keys unless told not to.
+- **grok:** with partial `--allow` rules, the first tool call outside the
+  allowlist silently ends the run - `stopReason: "cancelled"`, exit 0,
+  narration-only text, no stderr (an R1 silent failure; T10 must assert on
+  verdict presence, never on exit status). Rules use `Bash(...)/Read(...)`
+  prefixes; `--allow Read --allow "Bash(git*)"` was not sufficient for a
+  full review; `--always-approve --deny Edit --deny Write` completed in 6
+  turns at $0.12. Flag placement: `--max-turns` before `-p`.
 
 #### T4. Verdict schema and parser
 - JSON Schema for the verdict block, reusable as `--json-schema` (agy, grok)

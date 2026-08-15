@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "verdict": "REQUIRES_CHANGES",
+  "round": 1,
+  "blockers": [
+    {
+      "id": "greet-missing-type-hints",
+      "file": "greet.py",
+      "line": 1,
+      "claim": "greet has no parameter or return type annotations",
+      "why": "CLAUDE.md requires type hints everywhere"
+    },
+    {
+      "id": "greet-uses-print",
+      "file": "greet.py",
+      "line": 2,
+      "claim": "production code emits the greeting with print",
+      "why": "CLAUDE.md requires the logging module and prohibits production print statements"
+    },
+    {
+      "id": "greet-has-no-tests",
+      "file": "greet.py",
+      "line": 1,
+      "claim": "the new module has no pytest coverage under tests/",
+      "why": "CLAUDE.md requires every module to have tests under tests/"
+    }
+  ],
+  "non_blockers": []
+}
