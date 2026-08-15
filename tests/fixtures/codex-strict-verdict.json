@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "verdict": "REQUIRES_CHANGES",
+  "round": 1,
+  "blockers": [
+    {
+      "id": "toy-blocker",
+      "file": "toy.py",
+      "line": 1,
+      "claim": "The implementation contains a correctness defect.",
+      "why": "The defect prevents the required behavior from working reliably.",
+      "disposition": "unresolved"
+    }
+  ],
+  "non_blockers": []
+}

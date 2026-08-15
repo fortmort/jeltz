@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/fortmort/jeltz/review/verdict.schema.json",
+  "title": "jeltz skeptical-reviewer verdict",
+  "description": "The machine-readable verdict block ending every review. Shippable verbatim as --json-schema (agy, grok) input; codex --output-schema requires the strict variant derived by review/verdict.py strict_schema().",
+  "type": "object",
+  "required": ["schema_version", "verdict", "round", "blockers", "non_blockers"],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "verdict": {
+      "type": "string",
+      "enum": ["ACCEPTED", "ACCEPTED_WITH_NON_BLOCKERS", "REQUIRES_CHANGES"]
+    },
+    "round": { "type": "integer", "minimum": 1 },
+    "blockers": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    },
+    "non_blockers": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    }
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "required": ["id", "file", "line", "claim", "why"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "file": { "type": "string", "minLength": 1 },
+        "line": { "type": "integer", "minimum": 1 },
+        "claim": { "type": "string", "minLength": 1 },
+        "why": { "type": "string", "minLength": 1 },
+        "disposition": {
+          "type": ["string", "null"],
+          "enum": ["resolved", "unresolved", "regressed", null]
+        }
+      }
+    }
+  }
+}

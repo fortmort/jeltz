@@ -15,7 +15,7 @@ a rulebook governing `jeltz` itself.
 Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer. Only three can enforce the gate.
 
-Status: T1-T3 complete; next task is T4.
+Status: T1-T4 complete; next task is T5.
 
 ---
 
@@ -526,14 +526,80 @@ Adapter findings from the spike (feed into T8-T11):
   full review; `--always-approve --deny Edit --deny Write` completed in 6
   turns at $0.12. Flag placement: `--max-turns` before `-p`.
 
-#### T4. Verdict schema and parser
-- JSON Schema for the verdict block, reusable as `--json-schema` (agy, grok)
-  and `--output-schema` (codex exec) input.
-- Parser: extract the fenced block, validate, raise typed errors.
-- One repair round on malformed output, then escalate. Never infer from prose.
-- Treat empty output as a hard failure (R1).
-Acceptance: valid, malformed, missing, multiple-block, and empty inputs each
-behave as specified. Golden reviewer outputs as fixtures.
+#### T4. Verdict schema and parser - DONE
+Goal: the verdict block becomes a contract code can enforce, not a convention.
+
+Delivered: `review/verdict.schema.json` (standalone JSON Schema, draft
+2020-12, shippable verbatim as `--json-schema` input; `strict_schema()`
+derives the variant codex `--output-schema` requires) and
+`review/verdict.py` (`parse_verdict`, `validate_verdict` with semantic
+checks, `parse_with_repair`, typed `VerdictError` hierarchy). Contract
+pinned by 27 tests in `tests/test_verdict.py`, including validation of all
+four T3 golden host fixtures, the SKILL.md embedded example, and a live
+codex strict-mode verdict (`tests/fixtures/codex-strict-verdict.json`).
+
+Behavior as specified in the original acceptance:
+- Valid input: the single verdict-shaped fenced block is extracted and
+  validated; fenced JSON without a `schema_version` key (e.g. quoted
+  config) is ignored, so reviewers quoting JSON do not break parsing.
+- Empty/whitespace output: `EmptyOutputError`, `repairable = False`, never
+  retried (R1: a dead adapter must not be repaired into a pass).
+- Missing block, unparseable JSON, schema violation, multiple
+  verdict-shaped blocks: distinct typed errors, all `repairable = True`.
+- `parse_with_repair(text, rerun)` allows exactly one repair round: on a
+  repairable failure it sends a concrete re-emit instruction through the
+  `rerun` callback and parses the result; a second failure escalates by
+  raising. Adapters (T8-T11) supply `rerun` as a same-thread follow-up.
+- Semantic validation (added after review): a schema-valid verdict that
+  contradicts its own findings raises `SemanticViolationError`
+  (repairable) - accepting verdicts must carry no blockers,
+  `REQUIRES_CHANGES` must carry at least one, `ACCEPTED` carries no
+  non-blockers while `ACCEPTED_WITH_NON_BLOCKERS` carries some, and
+  finding ids must be unique across both arrays (they drive T13 thrash
+  tracking).
+
+Schema decisions recorded:
+- Findings in **both** arrays require `id`/`file`/`line`/`claim`/`why`
+  (all four golden fixtures already comply); `line` is an integer >= 1.
+- Optional `disposition` on findings, enum resolved/unresolved/regressed,
+  **nullable** (null means absent, so strict-mode output round-trips);
+  `round` is an integer >= 1. Every property carries an explicit `type`.
+- The canonical schema permits extra keys (no `additionalProperties:
+  false`) so a host adding fields does not fail an otherwise sound
+  verdict. Codex `--output-schema` enforces OpenAI strict structured
+  output and needs the opposite, so `strict_schema()` mechanically
+  hardens a copy: every object closed, every declared field required
+  (optional keys become required-but-nullable), canonical stays the
+  validation source of truth.
+
+Native-host schema evidence (live probes, 2026-08-15):
+- **codex 0.147.0:** `--output-schema` with the canonical schema is a 400
+  (`'additionalProperties' is required to be supplied and to be false`);
+  property schemas also need an explicit `type` (bare `const` rejected).
+  The `strict_schema()` variant was accepted end to end; the emitted
+  verdict is committed as `tests/fixtures/codex-strict-verdict.json`.
+  Adapter note (T8): schema-constrained output arrives as raw JSON, so
+  validate it with `validate_verdict`, not the fence-extracting
+  `parse_verdict`.
+- **agy 1.1.13:** `--json-schema <file>` accepted the canonical schema;
+  the response still arrived fence-wrapped inside the JSON envelope, so
+  the T9 adapter should run it through `parse_verdict` anyway.
+- **grok 1.0.4:** `--json-schema` takes the schema **inline as a JSON
+  string, not a file path** (a path is rejected with `invalid JSON`);
+  with `"$(cat schema.json)"` it emitted raw, schema-valid JSON
+  (T10 note).
+
+Repo decisions recorded:
+- **The T1 coverage revisit is settled:** Python under `review/` carries a
+  100% line-coverage gate (`pytest-cov`, `--cov-fail-under=100` in
+  `make test`); shell keeps the behavioral-pytest standard.
+- New venv deps: `jsonschema` and `pytest-cov` plus transitives, all
+  MIT/permissive. Dependencies live in a tracked `requirements-dev.txt`
+  and `make test` depends on it through a venv stamp (added after
+  review), so editing the list reinstalls into an existing venv instead
+  of leaving checkouts with T1's pytest-only venv failing at import.
+- Root `conftest.py` puts the repo root on `sys.path` so shipped Python
+  modules import without packaging metadata (which T1 deliberately avoids).
 
 #### T5. Update `reviewer-response/SKILL.md`
 - Consume findings by id; emit per-id dispositions

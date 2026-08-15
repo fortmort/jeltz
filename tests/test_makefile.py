@@ -109,6 +109,36 @@ def test_make_verify_aggregates_lint_and_test() -> None:
     )
 
 
+def test_dependency_changes_reinstall_before_tests() -> None:
+    """Editing the tracked dependency list retriggers installation.
+
+    T4 added jsonschema and pytest-cov to the venv. A checkout still
+    carrying T1's pytest-only .venv must install the new dependencies on
+    the next ``make test`` instead of failing at import time, so the test
+    target has to depend on the tracked dependency list, not merely on the
+    venv existing.
+    """
+    requirements = REPO_ROOT / "requirements-dev.txt"
+    assert requirements.is_file(), "no tracked dependency list to install from"
+    before = requirements.stat()
+    try:
+        os.utime(requirements)
+        result = _run_make("test", REPO_ROOT, dry_run=True)
+    finally:
+        # Restore the original mtime so the real venv stamp stays fresh and
+        # later make runs do not pay a needless reinstall.
+        os.utime(requirements, (before.st_atime, before.st_mtime))
+    assert result.returncode == 0, (
+        f"make -n test failed:\n{result.stdout}\n{result.stderr}"
+    )
+    assert "pip install" in result.stdout, (
+        f"a changed dependency list does not reinstall:\n{result.stdout}"
+    )
+    assert "requirements-dev.txt" in result.stdout, (
+        f"install does not read the tracked list:\n{result.stdout}"
+    )
+
+
 def test_make_test_passes_on_clean_checkout() -> None:
     """``make test`` exits 0 on a clean checkout.
 

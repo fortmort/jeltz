@@ -1,0 +1,218 @@
+"""Extract and validate the skeptical-reviewer verdict block.
+
+The fenced JSON block ending a review is the verdict of record; prose is for
+humans and is never inferred from (TODO.md R2). Empty reviewer output is a
+hard failure so a silently dead adapter cannot read as a pass (R1). Every
+other failure mode is repairable exactly once via ``parse_with_repair``.
+"""
+
+import json
+import re
+from pathlib import Path
+from typing import Any, Callable
+
+import jsonschema
+
+SCHEMA_PATH = Path(__file__).resolve().parent / "verdict.schema.json"
+
+_FENCED_JSON = re.compile(r"```json\s*\n(.*?)```", re.DOTALL)
+
+
+class VerdictError(Exception):
+    """Base for every verdict extraction or validation failure.
+
+    Attributes:
+        repairable: Whether one reviewer repair round may be attempted.
+    """
+
+    repairable: bool = True
+
+
+class EmptyOutputError(VerdictError):
+    """The reviewer produced no output at all; never repaired (R1)."""
+
+    repairable = False
+
+
+class MissingVerdictBlockError(VerdictError):
+    """Output contains prose but no verdict-shaped fenced JSON block."""
+
+
+class InvalidVerdictJSONError(VerdictError):
+    """A fenced JSON block exists but does not parse as JSON."""
+
+
+class MultipleVerdictBlocksError(VerdictError):
+    """More than one verdict-shaped block; the verdict is ambiguous."""
+
+
+class SchemaViolationError(VerdictError):
+    """The verdict block parses as JSON but violates the schema."""
+
+
+class SemanticViolationError(VerdictError):
+    """The verdict block is schema-valid but internally contradictory."""
+
+
+def load_schema() -> dict[str, Any]:
+    """Load the shipped verdict JSON Schema.
+
+    Returns:
+        The schema document as a dict.
+    """
+    return json.loads(SCHEMA_PATH.read_text())
+
+
+def validate_verdict(data: dict[str, Any]) -> None:
+    """Validate a parsed verdict object against the shipped schema.
+
+    Args:
+        data: The candidate verdict object.
+
+    Raises:
+        SchemaViolationError: If the object violates the schema.
+    """
+    try:
+        jsonschema.validate(data, load_schema())
+    except jsonschema.ValidationError as exc:
+        raise SchemaViolationError(exc.message) from exc
+    _check_semantics(data)
+
+
+def _check_semantics(data: dict[str, Any]) -> None:
+    """Reject schema-valid verdicts that contradict their own findings.
+
+    The verdict is the gate's record of truth and finding ids drive
+    remediation and thrash tracking, so a verdict/array mismatch or a
+    duplicated id is a correctness failure, not polish.
+
+    Args:
+        data: A schema-valid verdict object.
+
+    Raises:
+        SemanticViolationError: If the verdict contradicts its findings
+            arrays or reuses a finding id within the review.
+    """
+    verdict = data["verdict"]
+    blockers = data["blockers"]
+    non_blockers = data["non_blockers"]
+    if verdict == "REQUIRES_CHANGES":
+        if not blockers:
+            raise SemanticViolationError("REQUIRES_CHANGES with no blockers")
+    elif blockers:
+        raise SemanticViolationError(f"{verdict} with non-empty blockers")
+    if verdict == "ACCEPTED" and non_blockers:
+        raise SemanticViolationError("ACCEPTED with non-empty non_blockers")
+    if verdict == "ACCEPTED_WITH_NON_BLOCKERS" and not non_blockers:
+        raise SemanticViolationError("ACCEPTED_WITH_NON_BLOCKERS with no non_blockers")
+    ids = [finding["id"] for finding in blockers + non_blockers]
+    duplicates = {i for i in ids if ids.count(i) > 1}
+    if duplicates:
+        raise SemanticViolationError(
+            f"finding ids reused within the review: {sorted(duplicates)}"
+        )
+
+
+def strict_schema() -> dict[str, Any]:
+    """Derive the strict variant codex --output-schema requires.
+
+    Verified live against codex 0.147.0 (TODO.md T4): OpenAI structured
+    output rejects any object without ``additionalProperties: false`` and a
+    ``required`` list naming every declared property, and any property
+    schema without an explicit ``type``. The canonical schema already types
+    every property and makes ``disposition`` nullable, so hardening is
+    purely mechanical; optional-in-canonical keys become required-but-null.
+
+    Returns:
+        A deep, hardened copy of the canonical schema.
+    """
+    schema = load_schema()
+    _harden(schema)
+    return schema
+
+
+def _harden(node: Any) -> None:
+    """Recursively close objects and require every declared property."""
+    if isinstance(node, dict):
+        if "properties" in node:
+            node["additionalProperties"] = False
+            node["required"] = sorted(node["properties"])
+        for value in node.values():
+            _harden(value)
+    elif isinstance(node, list):
+        for value in node:
+            _harden(value)
+
+
+def parse_verdict(text: str) -> dict[str, Any]:
+    """Extract and validate the single verdict block from reviewer output.
+
+    Args:
+        text: The reviewer's complete output.
+
+    Returns:
+        The validated verdict object.
+
+    Raises:
+        EmptyOutputError: Output is empty or whitespace; not repairable.
+        MissingVerdictBlockError: No verdict-shaped fenced JSON block.
+        InvalidVerdictJSONError: Fenced JSON present but unparseable.
+        MultipleVerdictBlocksError: More than one verdict-shaped block.
+        SchemaViolationError: The block violates the verdict schema.
+    """
+    if not text.strip():
+        raise EmptyOutputError("reviewer produced no output")
+    blocks = _FENCED_JSON.findall(text)
+    if not blocks:
+        raise MissingVerdictBlockError("no fenced JSON block in reviewer output")
+    candidates: list[dict[str, Any]] = []
+    parse_errors: list[str] = []
+    for block in blocks:
+        try:
+            data = json.loads(block)
+        except json.JSONDecodeError as exc:
+            parse_errors.append(str(exc))
+            continue
+        if isinstance(data, dict) and "schema_version" in data:
+            candidates.append(data)
+    if not candidates:
+        if parse_errors:
+            raise InvalidVerdictJSONError(parse_errors[0])
+        raise MissingVerdictBlockError(
+            "no fenced JSON block carries a schema_version key"
+        )
+    if len(candidates) > 1:
+        raise MultipleVerdictBlocksError(
+            f"{len(candidates)} verdict-shaped blocks; expected exactly one"
+        )
+    validate_verdict(candidates[0])
+    return candidates[0]
+
+
+def parse_with_repair(text: str, rerun: Callable[[str], str]) -> dict[str, Any]:
+    """Parse reviewer output, allowing exactly one repair round.
+
+    Args:
+        text: The reviewer's complete output.
+        rerun: Callback that sends a repair instruction back to the same
+            reviewer thread and returns its new output.
+
+    Returns:
+        The validated verdict object.
+
+    Raises:
+        VerdictError: If the output is empty (never repaired), or if the
+            repaired output still fails to parse or validate.
+    """
+    try:
+        return parse_verdict(text)
+    except VerdictError as exc:
+        if not exc.repairable:
+            raise
+        instruction = (
+            "Your review is missing a valid machine-readable verdict "
+            f"({exc}). Re-emit ONLY the verdict as exactly one fenced JSON "
+            "block matching the documented schema: schema_version, verdict, "
+            "round, blockers, non_blockers - both arrays always present."
+        )
+        return parse_verdict(rerun(instruction))
