@@ -162,8 +162,8 @@ def test_incomplete_finding_is_rejected() -> None:
 
 def test_disposition_is_optional_but_constrained() -> None:
     """Re-review dispositions validate; values outside the enum do not."""
-    resolved = dict(VALID_VERDICT["blockers"][0], disposition="resolved")
-    validate_verdict(_mutated(round=2, blockers=[resolved]))
+    unresolved = dict(VALID_VERDICT["blockers"][0], disposition="unresolved")
+    validate_verdict(_mutated(round=2, blockers=[unresolved]))
     bogus = dict(VALID_VERDICT["blockers"][0], disposition="wontfix")
     with pytest.raises(SchemaViolationError):
         validate_verdict(_mutated(round=2, blockers=[bogus]))
@@ -280,7 +280,7 @@ def test_empty_output_is_not_repaired() -> None:
 
 
 def test_accepting_verdicts_with_blockers_is_contradictory() -> None:
-    """An accepting verdict carrying blockers is rejected, repairably."""
+    """An accepting verdict carrying undisposed (active) blockers is rejected."""
     for verdict in ("ACCEPTED", "ACCEPTED_WITH_NON_BLOCKERS"):
         with pytest.raises(SemanticViolationError) as excinfo:
             validate_verdict(_mutated(verdict=verdict))
@@ -329,6 +329,51 @@ def test_null_disposition_is_accepted() -> None:
     """A null disposition (strict-mode output for 'absent') validates."""
     nulled = dict(VALID_VERDICT["blockers"][0], disposition=None)
     validate_verdict(_mutated(blockers=[nulled]))
+
+
+def test_accepting_rereview_retains_resolved_blocker_ids() -> None:
+    """An accepting re-review lists prior blockers as resolved (the T5 join).
+
+    The re-review contract requires every prior blocker to reappear under
+    its stable id with a disposition, and a fully successful round is an
+    accepting verdict - so accepting verdicts must admit blockers whose
+    disposition is resolved, or the id join is unrepresentable exactly when
+    every blocker was fixed.
+    """
+    resolved = dict(VALID_VERDICT["blockers"][0], disposition="resolved")
+    validate_verdict(
+        _mutated(verdict="ACCEPTED", round=2, blockers=[resolved], non_blockers=[])
+    )
+
+
+def test_round_one_resolved_disposition_does_not_bypass_acceptance() -> None:
+    """A round-one 'resolved' blocker cannot make an accepting verdict valid.
+
+    Dispositions judge *prior* blockers, and round one has none - so a
+    resolved disposition can mark a blocker inactive only in a re-review.
+    Under strict structured output the disposition key is forced on every
+    finding, so a host mislabeling a fresh blocker 'resolved' must not
+    slip real blockers past the gate.
+    """
+    resolved = dict(VALID_VERDICT["blockers"][0], disposition="resolved")
+    for verdict in ("ACCEPTED", "ACCEPTED_WITH_NON_BLOCKERS"):
+        with pytest.raises(SemanticViolationError):
+            validate_verdict(_mutated(verdict=verdict, round=1, blockers=[resolved]))
+
+
+def test_accepting_verdicts_reject_active_blockers() -> None:
+    """Unresolved, regressed, or undisposed blockers still block acceptance."""
+    for disposition in ("unresolved", "regressed", None):
+        blocker = dict(VALID_VERDICT["blockers"][0], disposition=disposition)
+        with pytest.raises(SemanticViolationError):
+            validate_verdict(_mutated(verdict="ACCEPTED", round=2, blockers=[blocker]))
+
+
+def test_requires_changes_with_only_resolved_blockers_is_contradictory() -> None:
+    """REQUIRES_CHANGES needs at least one active (non-resolved) blocker."""
+    resolved = dict(VALID_VERDICT["blockers"][0], disposition="resolved")
+    with pytest.raises(SemanticViolationError):
+        validate_verdict(_mutated(round=2, blockers=[resolved]))
 
 
 # --- the strict schema variant for codex --output-schema --------------------

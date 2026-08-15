@@ -15,7 +15,7 @@ a rulebook governing `jeltz` itself.
 Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer. Only three can enforce the gate.
 
-Status: T1-T4 complete; next task is T5.
+Status: T1-T5 complete; next task is T6.
 
 ---
 
@@ -550,13 +550,15 @@ Behavior as specified in the original acceptance:
   repairable failure it sends a concrete re-emit instruction through the
   `rerun` callback and parses the result; a second failure escalates by
   raising. Adapters (T8-T11) supply `rerun` as a same-thread follow-up.
-- Semantic validation (added after review): a schema-valid verdict that
-  contradicts its own findings raises `SemanticViolationError`
-  (repairable) - accepting verdicts must carry no blockers,
-  `REQUIRES_CHANGES` must carry at least one, `ACCEPTED` carries no
-  non-blockers while `ACCEPTED_WITH_NON_BLOCKERS` carries some, and
-  finding ids must be unique across both arrays (they drive T13 thrash
-  tracking).
+- Semantic validation (added after review; blocker rule amended after the
+  T5 review): a schema-valid verdict that contradicts its own findings
+  raises `SemanticViolationError` (repairable). A blocker is **active**
+  unless its `disposition` is `resolved`: accepting verdicts must carry no
+  active blockers (resolved prior blockers stay listed so their ids
+  survive an accepting re-review - the T5 join), `REQUIRES_CHANGES` must
+  carry at least one active blocker, `ACCEPTED` carries no non-blockers
+  while `ACCEPTED_WITH_NON_BLOCKERS` carries some, and finding ids must be
+  unique across both arrays (they drive T13 thrash tracking).
 
 Schema decisions recorded:
 - Findings in **both** arrays require `id`/`file`/`line`/`claim`/`why`
@@ -601,12 +603,56 @@ Repo decisions recorded:
 - Root `conftest.py` puts the repo root on `sys.path` so shipped Python
   modules import without packaging metadata (which T1 deliberately avoids).
 
-#### T5. Update `reviewer-response/SKILL.md`
-- Consume findings by id; emit per-id dispositions
-  (fixed / rejected-invalid / deferred-non-blocker) with reasons.
-- Add the deadlock rule from termination condition 3.
-- Forbid silent scope expansion, which is what makes round counts explode.
-Acceptance: output is diffable against the next round's verdict by id.
+#### T5. Update `reviewer-response/SKILL.md` - DONE
+Goal: make the fixer's output a machine-joinable half of the review loop.
+
+Delivered: rewritten `skills/reviewer-response/SKILL.md`; contract pinned by
+10 behavioral tests in `tests/test_response_skill.py` (same text-as-contract
+approach as T3, including parsing the embedded response example).
+
+The revised contract:
+- Findings are consumed **by the verdict's stable finding ids**: every id
+  gets exactly one classification, no paraphrased titles, no skipped ids.
+- New output section E ends the response with exactly one fenced JSON
+  block: `{schema_version: 1, round, dispositions: [{id, disposition,
+  reason}]}`, disposition enum `fixed` / `rejected-invalid` /
+  `deferred-non-blocker`, same ids the reviewer used - so the orchestrator
+  diffs it mechanically against the next round's verdict (a `fixed` id
+  coming back unresolved/regressed is condition-2 thrash; a
+  `rejected-invalid` id coming back at all is condition 3).
+- Deadlock rule (termination condition 3) stated: a rejection the reviewer
+  re-asserts is genuine disagreement - escalate to a human tiebreak with
+  both positions; never re-reject, never silently capitulate.
+- Silent scope expansion forbidden: every change must map to a specific
+  finding id and section B must say which; forced collateral edits are
+  declared under the id that forced them.
+- Host-portable text: 7-bit ASCII throughout, `@CLAUDE.md` expansion
+  replaced with a plain-path read instruction, final-status lines now
+  ASCII literals (`-- ` not em dash) so automation can match them
+  byte-for-byte.
+
+Decisions recorded:
+- **Response block detection key is `dispositions`**, not `schema_version`
+  alone, so tooling scanning fixer output never confuses it with a verdict
+  block (which `parse_verdict` identifies by `schema_version`).
+- **The three final-status lines are part of the contract** and pinned as
+  exact ASCII literals; T12/T20 may match them literally.
+- The example response reuses the `gate-ignores-symlink` id from the
+  skeptical-reviewer example, demonstrating the cross-skill id join.
+- **Verdict semantics reconciled (added after review):** the T4 validator
+  had rejected any accepting verdict with a non-empty blockers array,
+  which made the successful join unrepresentable exactly when every
+  blocker was fixed. Now a blocker is *active* unless disposed
+  `resolved` **in a re-review (round 2+)**; round one has no prior
+  blockers, so a round-one disposition never deactivates anything (a
+  strict-mode host is forced to emit the key on fresh findings - the
+  live codex fixture carries round-one `unresolved` - and a mislabeled
+  `resolved` must not bypass the gate). Accepting re-reviews list prior
+  blockers as `resolved` (skeptical-reviewer SKILL.md states this
+  explicitly) and `REQUIRES_CHANGES` needs an active blocker.
+  `tests/test_response_skill.py` executes the round-two join end to end
+  through `validate_verdict` instead of merely asserting the skill
+  mentions it.
 
 ### Phase 2 - the review engine
 

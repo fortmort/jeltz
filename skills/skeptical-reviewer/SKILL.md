@@ -190,6 +190,10 @@ of record.
   across rounds** (see Re-Review Mode).
 - In a re-review, each prior blocker also carries its `disposition`
   (`resolved`, `unresolved`, or `regressed`).
+- An accepting re-review verdict still lists every prior blocker, each with
+  `disposition` `resolved`, so its stable id survives into the round where
+  it was fixed. Only a blocker that is not resolved makes the verdict
+  `REQUIRES_CHANGES`.
 
 Example:
 

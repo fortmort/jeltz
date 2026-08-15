@@ -86,6 +86,16 @@ def _check_semantics(data: dict[str, Any]) -> None:
     remediation and thrash tracking, so a verdict/array mismatch or a
     duplicated id is a correctness failure, not polish.
 
+    A blocker is *active* unless its disposition is ``resolved`` - and a
+    disposition can mark a blocker inactive only in a re-review (round
+    2+), because dispositions judge prior blockers and round one has
+    none; a round-one blocker is active whatever its disposition claims
+    (hosts using strict structured output are forced to emit the key on
+    fresh findings). Resolved prior blockers stay listed under their
+    stable ids in an accepting re-review (the T5 join depends on those
+    ids surviving the success case); only active blockers justify - and
+    are required by - ``REQUIRES_CHANGES``.
+
     Args:
         data: A schema-valid verdict object.
 
@@ -96,11 +106,15 @@ def _check_semantics(data: dict[str, Any]) -> None:
     verdict = data["verdict"]
     blockers = data["blockers"]
     non_blockers = data["non_blockers"]
+    rereview = data["round"] > 1
+    active = [
+        f for f in blockers if not (rereview and f.get("disposition") == "resolved")
+    ]
     if verdict == "REQUIRES_CHANGES":
-        if not blockers:
-            raise SemanticViolationError("REQUIRES_CHANGES with no blockers")
-    elif blockers:
-        raise SemanticViolationError(f"{verdict} with non-empty blockers")
+        if not active:
+            raise SemanticViolationError("REQUIRES_CHANGES with no active blockers")
+    elif active:
+        raise SemanticViolationError(f"{verdict} with active (non-resolved) blockers")
     if verdict == "ACCEPTED" and non_blockers:
         raise SemanticViolationError("ACCEPTED with non-empty non_blockers")
     if verdict == "ACCEPTED_WITH_NON_BLOCKERS" and not non_blockers:
