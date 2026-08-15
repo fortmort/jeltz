@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "hosts": {
+    "claude": {
+      "allow": ["Read", "Grep", "Glob", "Bash"],
+      "deny": ["Edit", "Write", "NotebookEdit"],
+      "notes": "T11: pass as --tools. Bash can still write; D5 is enforced by the T6 integrity check (R7), not by this list."
+    },
+    "codex": {
+      "allow": ["shell"],
+      "deny": ["apply_patch"],
+      "notes": "T8: expressed via --sandbox scoped to the review worktree. shell can still write (R7)."
+    },
+    "agy": {
+      "allow": ["read", "grep", "command"],
+      "deny": ["write", "edit"],
+      "notes": "T9: permissions.allow schema unresolved; tool names are provisional until the T9 probe."
+    },
+    "grok": {
+      "allow": ["Read", "Grep", "Glob", "Bash"],
+      "deny": ["Edit", "Write", "search_replace"],
+      "notes": "T10: --deny Edit --deny Write verified live (T3 spike); search_replace is grok's native edit tool (3.5)."
+    }
+  }
+}

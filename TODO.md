@@ -15,7 +15,7 @@ a rulebook governing `jeltz` itself.
 Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer. Only three can enforce the gate.
 
-Status: T1-T6 complete; next task is T7.
+Status: T1-T7 complete; next task is T8.
 
 ---
 
@@ -736,17 +736,66 @@ Hardened after review (three blockers, all reproduced by the reviewer):
   `review_worktree()` reaps on entry so the next review self-heals. T12's
   orchestrator should also call it at startup.
 
-#### T7. Adapter interface
+#### T7. Adapter interface - DONE
 Goal: pin the contract before writing four of them.
-- `review(packet, mode=new|resume, thread_id) -> (verdict, thread_id, raw)`.
-- Mandatory positive-output assertion (R1) and typed transport errors.
-- Per-host tool allowlist as shipped config (R6). Treat this as defence in
-  depth, not enforcement; T6's integrity check is what actually holds (R7).
-- A failed integrity check is a distinct typed error, not a verdict. The
-  orchestrator must never be able to record it as an accepted review.
-Acceptance: a fake adapter exercises every orchestrator path without a network
-call, including one that edits a tracked file and one that returns empty
-output.
+
+Delivered: `review/adapter.py` and the shipped `review/tool-allowlists.json`;
+contract pinned by 18 tests in `tests/test_adapter.py`, all driven by a
+scripted fake adapter with no network call, per the acceptance. `review/`
+holds the 100% coverage gate (adapter.py adds 53 statements).
+
+Behavior as specified in the original acceptance:
+- `ReviewerAdapter.review(packet, worktree, mode=new|resume, thread_id)`
+  returns a frozen `ReviewResult(verdict, thread_id, raw)`. The prompt is
+  `packet.render()`; `raw` is the output the verdict was parsed from.
+- Subclasses (T8-T11) implement only `_send(prompt, worktree, thread_id) ->
+  (raw, thread_id)`. The `review()` template method owns everything a host
+  could get wrong: mode/thread validation (resume requires a thread id, new
+  forbids one, unknown modes fail fast), the positive-output assertion (R1:
+  empty output raises `EmptyOutputError` with NO repair attempt), and T4's
+  single same-thread repair round (R2: the repair instruction goes back on
+  the thread the review ran on; a second bad output escalates by raising).
+- Typed transport errors: `AdapterError` base, `AdapterProcessError` for a
+  backend that died - never a verdict, and the worktree is still cleaned up.
+- `conduct_review(repo, adapter, wip_message, todo_ref, verify_output, mode,
+  thread_id, size_ceiling)` runs one full round: build packet, materialize
+  the T6 worktree, snapshot, dispatch, verify integrity. An oversized packet
+  raises `PacketTooLargeError` before any reviewer contact (condition 4);
+  a reviewer that edits a tracked file raises `IntegrityError` even when its
+  verdict was ACCEPTED - the verdict is discarded, so the orchestrator can
+  never record a tampered review as accepted (R7).
+- `tool_policy(host) -> ToolPolicy(allow, deny)` loads the shipped per-host
+  allowlist config (R6); unknown hosts raise KeyError. Policies are
+  non-empty and non-contradictory for all four hosts; edit tools are denied
+  by name (claude/grok Edit+Write, grok search_replace, codex apply_patch).
+
+Decisions recorded:
+- **The contract layer is a template method, not a convention.** R1 and R2
+  live in `ReviewerAdapter.review()`, so no host adapter can forget the
+  empty-output assertion or mishandle the repair protocol; adapters are
+  reduced to a transport primitive.
+- **Integrity is checked inside `conduct_review`, after the adapter and
+  before the result escapes the worktree context** - the accepting-verdict
+  discard is structural, not a caller obligation.
+- **Allowlists ship as data (`review/tool-allowlists.json`), not code**, so
+  consumers can inspect and projects can override them without touching the
+  engine; each entry carries a note tying it to its host task. The agy tool
+  names are provisional until T9 resolves the `permissions.allow` schema.
+- `mode` is a plain string pair ("new"/"resume") rather than an enum -
+  it crosses a shell boundary in T12 (`run.sh --new|--resume`), where
+  strings are the native currency.
+
+Hardened after review (one blocker, reproduced by the reviewer):
+- **Thread continuity is verified, not trusted.** The template method had
+  validated only the caller's mode/thread pairing while accepting whatever
+  thread id `_send` returned - so a backend answering a resume on a fresh
+  thread (silently restarting the review without its prior findings), a new
+  review returning no thread id (unresumable), or a repair round drifting
+  to another thread all passed undetected. `review()` now raises a typed
+  `ThreadContinuityError` (an `AdapterError`, never a verdict) in all three
+  cases, and the fake adapter can script returned thread ids independently
+  of the requested one so the echo behavior of a well-behaved backend can
+  no longer mask the check.
 
 #### T8. Codex adapter (plus the D2 A/B)
 - Default path: `codex exec` against the installed skill with the prompt form
