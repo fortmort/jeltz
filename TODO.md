@@ -15,7 +15,7 @@ a rulebook governing `jeltz` itself.
 Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer. Only three can enforce the gate.
 
-Status: analysis complete, no implementation started.
+Status: T1 complete; next task is T2.
 
 ---
 
@@ -387,21 +387,32 @@ Ordered. Each is intended to be one red/green/refactor cycle unless noted.
 
 ### Phase 0 - distribution foundations
 
-#### T1. Repo tooling for shipped artifacts
+#### T1. Repo tooling for shipped artifacts - DONE
 Goal: make the shipped scripts testable without pretending `jeltz` is a
 consumer project.
-- `Makefile` with `lint` (shellcheck + shfmt, already used by hand per
-  `.claude/settings.local.json`) and `test`.
-- Decide the test runner for shell: pytest driving subprocesses, or `bats`
-  (MIT, not currently installed). Whichever is chosen ships with the repo, not
-  with the artifacts.
-- Caution: adding a tracked `[tool.ruff]` section flips
-  `hooks/lib/repo-mode.sh` from `diff` to `strict` for this tree. Only add one
-  deliberately.
-- Coverage: `CLAUDE.md`'s 100% rule is a consumer norm. Record what standard
-  `jeltz` holds itself to; do not silently inherit a rule written for Python
-  application code.
-Acceptance: `make lint` and `make test` pass on a clean checkout.
+
+Delivered: root `Makefile` with `lint` (shellcheck `-x -P hooks` + `shfmt -i 4
+-ci -d`, wildcarded over `hooks/*.sh` and `hooks/lib/*.sh` so new scripts are
+covered automatically), `test` (pytest from a self-bootstrapping stdlib
+`.venv`), and `verify` (lint + test). Tests in `tests/test_makefile.py`;
+`.gitignore` added for the venv and tool caches.
+
+Decisions recorded:
+- **Test runner: pytest driving subprocesses**, not `bats`. T4's verdict
+  parser is Python and mandates pytest per `CLAUDE.md`, so bats would be a
+  second runner; neither was installed.
+- **Bootstrap: `python3 -m venv` + pip**, not `uv run --with pytest` - the
+  installed uv 0.8.1 fails with a `--with` overlay bug on the Homebrew
+  interpreter ("failed to read from file .../uvx: stream did not contain
+  valid UTF-8"). Revisit if uv is upgraded.
+- **No pyproject.toml / ruff config added**, deliberately: a tracked
+  `[tool.ruff]` section would flip `hooks/lib/repo-mode.sh` to strict for
+  this tree. The venv approach needs no packaging file at all.
+- **Coverage standard for `jeltz` itself:** `CLAUDE.md`'s 100% rule is a
+  consumer norm for Python application code. `jeltz` holds itself to:
+  shellcheck- and shfmt-clean shell, and behavioral pytest coverage of every
+  shipped artifact's acceptance criteria - no numeric coverage gate while the
+  codebase is shell. Revisit when Python modules land (T4).
 
 #### T2. Multi-host, multi-scope installer
 Goal: one source of truth, installed correctly on any host and scope.
