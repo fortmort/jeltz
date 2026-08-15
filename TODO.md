@@ -15,9 +15,6 @@ a rulebook governing `jeltz` itself.
 Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer. Only three can enforce the gate.
 
-Note on location: `skills/tdd-phase-loop/SKILL.md` reads `@TODO.md` at the
-consumer repo root. This file is `docs/TODO.md` by request. See T21.
-
 Status: analysis complete, no implementation started.
 
 ---
@@ -637,8 +634,6 @@ and no copy-paste.
 - README section on the review loop and installing the gate, per host and
   scope.
 - Config reference: backend, model, max rounds, size ceiling, opt-out.
-- Resolve the `TODO.md` path split noted at the top of this file, plus Q2 and
-  Q3.
 - Record how to re-verify section 3 (section 9) and against which versions.
 
 ---
