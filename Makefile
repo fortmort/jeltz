@@ -5,12 +5,12 @@
 # on purpose -- it would flip hooks/lib/repo-mode.sh to strict mode (see
 # TODO.md T1).
 
-SH_SOURCES := $(wildcard hooks/*.sh hooks/lib/*.sh)
+SH_SOURCES := install.sh $(wildcard hooks/*.sh hooks/lib/*.sh)
 
 VENV := .venv
 PYTEST := $(VENV)/bin/pytest
 
-.PHONY: lint test verify
+.PHONY: lint test verify check-install
 
 verify: lint test
 
@@ -24,3 +24,8 @@ test: $(PYTEST)
 $(PYTEST):
 	python3 -m venv $(VENV)
 	$(VENV)/bin/pip install --quiet pytest
+
+# Drift check for an installed consumer repo: make check-install TARGET=/path
+check-install:
+	@test -n "$(TARGET)" || { echo "usage: make check-install TARGET=<consumer-repo>" >&2; exit 2; }
+	./install.sh --check "$(TARGET)"

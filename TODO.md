@@ -15,7 +15,7 @@ a rulebook governing `jeltz` itself.
 Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer. Only three can enforce the gate.
 
-Status: T1 complete; next task is T2.
+Status: T1-T2 complete; next task is T3.
 
 ---
 
@@ -414,21 +414,43 @@ Decisions recorded:
   shipped artifact's acceptance criteria - no numeric coverage gate while the
   codebase is shell. Revisit when Python modules land (T4).
 
-#### T2. Multi-host, multi-scope installer
+#### T2. Multi-host, multi-scope installer - DONE
 Goal: one source of truth, installed correctly on any host and scope.
-- Implement the 4.3 matrix. Project scope is the default.
-- Evaluate packaging the Claude Code target as a plugin so one artifact covers
-  Claude Code and grok, including `hooks/hooks.json`.
-- Spike: does codex discover project-scoped skills, or is `$CODEX_HOME` the
-  only location? `codex debug prompt-input` from inside a project with a
-  candidate directory answers this in one command.
-- Generate `.agents/skills.json` for antigravity so a consumer's skills can
-  live in one shared directory rather than duplicated per host.
-- Stamp an installed version so consumers can detect drift from what this repo
-  ships.
-- `make check-install` reports drift.
-Acceptance: a fresh consumer repo gets working skills on all four hosts from
-one command; `check-install` detects a hand-edited installed copy.
+
+Delivered: `install.sh` (project scope default, `--check`, `--user`),
+`make check-install TARGET=<dir>`, tests in `tests/test_installer.py`.
+
+Spike results (2026-08-15, codex 0.147.0, agy 1.1.13):
+- **Codex DOES discover project-scoped skills**, in both `.codex/skills/`
+  and `.agents/skills/` - not in `.claude/skills/` or bare `skills/`.
+- **Both codex and antigravity follow a symlinked `.agents/skills`.** With
+  `.agents/skills -> ../.claude/skills`, codex's prompt input and agy's
+  skill list (with `--new-project`) both report the `.claude/skills`
+  content. Antigravity needed **no `.agents/skills.json`** for the standard
+  location, so none is generated.
+- Resulting project layout, one directory serving four hosts:
+  `.claude/skills/<name>/` (real copies; Claude Code + grok native) plus
+  the committed `.agents/skills` symlink (codex + antigravity).
+
+Decisions recorded:
+- **Plugin packaging: deferred.** The plain `.claude/skills/` layout already
+  covers Claude Code and grok at project scope; a plugin only helps
+  user-scope distribution and hook bundling. Revisit when the hook shims
+  (T16-T18) ship.
+- **Drift stamp:** `.claude/skills/.jeltz-manifest` - `# jeltz <short-sha>`
+  header plus one sha256 line per installed file. `--check` reports
+  `DRIFTED`/`MISSING` per file AND validates that `.agents/skills` is a
+  symlink resolving to `.claude/skills` (added after review: a missing or
+  retargeted link is drift for codex/antigravity even when every file
+  hashes clean). Exit 1 on any drift. Reinstall repairs all of it,
+  including the link having been replaced by a real directory.
+- **User scope** installs real copies into `$HOME/.claude/skills` and
+  `$CODEX_HOME/skills` (default `~/.codex`). Antigravity user scope is
+  explicitly out of T2's scope - see the Deferred section for why and for
+  the re-entry condition.
+- **Caveat:** the symlink requires symlink-capable checkouts/filesystems;
+  Windows consumers without developer mode would need the duplicated-copy
+  fallback (not implemented).
 
 ### Phase 1 - the skill contract
 
@@ -658,6 +680,13 @@ and no copy-paste.
   and would silently collapse the diversity it was chosen for.
 - **CI-side verification** that every commit carries a review record (R4). This
   is the only enforcement path that covers grok completely.
+- **Antigravity user-scope install.** Deliberately dropped from T2's scope
+  (2026-08-15 review): the `~/.gemini/config/` location in the 3.3 table is
+  unverified vendor documentation, and verifying it requires mutating the
+  real `~/.gemini` - agy's auth lives there, so a sandboxed `$HOME` probe
+  cannot run. Project scope covers antigravity fully via the `.agents/skills`
+  symlink and is the Problem B path. Pick this up only if a user-scope agy
+  consumer actually appears; verify the location first with a probe skill.
 
 ---
 
