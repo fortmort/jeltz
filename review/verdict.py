@@ -15,7 +15,10 @@ import jsonschema
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "verdict.schema.json"
 
-_FENCED_JSON = re.compile(r"```json\s*\n(.*?)```", re.DOTALL)
+# Shared with review.escalation: the verdict block and the
+# reviewer-response dispositions block ride the same fenced-JSON wire
+# format, and one pattern keeps the two extractors in lockstep.
+FENCED_JSON = re.compile(r"```json\s*\n(.*?)```", re.DOTALL)
 
 
 class VerdictError(Exception):
@@ -202,7 +205,7 @@ def parse_verdict(text: str) -> dict[str, Any]:
     """
     if not text.strip():
         raise EmptyOutputError("reviewer produced no output")
-    blocks = _FENCED_JSON.findall(text)
+    blocks = FENCED_JSON.findall(text)
     if not blocks:
         raise MissingVerdictBlockError("no fenced JSON block in reviewer output")
     candidates: list[dict[str, Any]] = []

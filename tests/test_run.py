@@ -206,7 +206,16 @@ def test_resume_continues_recorded_thread(
         [{"stdout": events(requires)}, {"stdout": events(accepted)}],
     )
     assert run_main(monkeypatch, home, ["--new", "--repo", str(dirty_repo)]) == 10
-    assert run_main(monkeypatch, home, ["--resume", "--repo", str(dirty_repo)]) == 0
+    response = tmp_path / "response.md"
+    response.write_text(
+        response_text(1, [{"id": "b1", "disposition": "fixed", "reason": "patched"}])
+    )
+    code = run_main(
+        monkeypatch,
+        home,
+        ["--resume", "--repo", str(dirty_repo), "--response-file", str(response)],
+    )
+    assert code == 0
     resume_argv = calls(home)[1]["argv"]
     assert resume_argv[:3] == ["exec", "resume", "thread-codex-1"]
     state = read_state(dirty_repo)
@@ -263,6 +272,7 @@ def test_resume_without_state_fails(
         json.dumps({"backend": "codex", "round": 1, "history": []}),
         json.dumps({"backend": "codex", "thread_id": "t", "round": "1", "history": []}),
         json.dumps({"backend": "codex", "thread_id": "t", "round": 1, "history": {}}),
+        json.dumps({"backend": "codex", "thread_id": "t", "round": 1, "history": []}),
     ],
     ids=[
         "unparseable",
@@ -271,6 +281,7 @@ def test_resume_without_state_fails(
         "missing-thread",
         "round-not-int",
         "history-not-list",
+        "missing-verdict",
     ],
 )
 def test_resume_with_unusable_state_fails(
@@ -507,7 +518,15 @@ def test_resume_rejects_wrong_round_verdict(
         ],
     )
     assert run_main(monkeypatch, home, ["--new", "--repo", str(dirty_repo)]) == 10
-    code = run_main(monkeypatch, home, ["--resume", "--repo", str(dirty_repo)])
+    response = tmp_path / "response.md"
+    response.write_text(
+        response_text(1, [{"id": "b1", "disposition": "fixed", "reason": "patched"}])
+    )
+    code = run_main(
+        monkeypatch,
+        home,
+        ["--resume", "--repo", str(dirty_repo), "--response-file", str(response)],
+    )
     assert code == 1
     assert "round" in capsys.readouterr().err
     state = read_state(dirty_repo)
@@ -531,3 +550,348 @@ def test_run_sh_wrapper_end_to_end(dirty_repo: Path, tmp_path: Path) -> None:
     assert proc.returncode == 0, proc.stderr
     assert '"ACCEPTED"' in proc.stdout
     assert state_path(dirty_repo).exists()
+
+
+def response_text(round_number: int, dispositions: list[dict]) -> str:
+    """A reviewer-response fixer output ending in its section E block."""
+    block = json.dumps(
+        {
+            "schema_version": 1,
+            "round": round_number,
+            "dispositions": dispositions,
+        }
+    )
+    return "### A. Classification Summary\n\nprose\n\n```json\n" + block + "\n```\n"
+
+
+def dossier_path(repo: Path) -> Path:
+    return repo / ".jeltz" / "review" / "escalation.md"
+
+
+def test_resume_escalates_a_reasserted_rejection(
+    dirty_repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """Condition 3: a rejected-invalid id re-asserted exits 20 with a dossier."""
+    requires = verdict_obj("REQUIRES_CHANGES", blockers=[finding("b1")])
+    reasserted = verdict_obj(
+        "REQUIRES_CHANGES", round_number=2, blockers=[finding("b1", "unresolved")]
+    )
+    home = install_fake_codex(
+        tmp_path, [{"stdout": events(requires)}, {"stdout": events(reasserted)}]
+    )
+    assert run_main(monkeypatch, home, ["--new", "--repo", str(dirty_repo)]) == 10
+    response = tmp_path / "response.md"
+    response.write_text(
+        response_text(
+            1,
+            [{"id": "b1", "disposition": "rejected-invalid", "reason": "not a defect"}],
+        )
+    )
+    code = run_main(
+        monkeypatch,
+        home,
+        ["--resume", "--repo", str(dirty_repo), "--response-file", str(response)],
+    )
+    assert code == 20
+    assert "human" in capsys.readouterr().err
+    dossier = dossier_path(dirty_repo).read_text()
+    assert "condition 3" in dossier
+    assert "b1" in dossier
+    assert "not a defect" in dossier
+    assert read_state(dirty_repo)["round"] == 2
+
+
+def test_round_cap_escalates_after_three_failing_rounds(
+    dirty_repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """Condition 1: round 3 still REQUIRES_CHANGES exits 20, state recorded.
+
+    Each round surfaces a NEW blocker: with dispositions now mandatory, a
+    returning id would trip condition 2 or 3 first, so the pure round-cap
+    path is a reviewer that keeps finding fresh problems.
+    """
+    rounds = [
+        verdict_obj("REQUIRES_CHANGES", blockers=[finding("b1")]),
+        verdict_obj(
+            "REQUIRES_CHANGES",
+            round_number=2,
+            blockers=[finding("b1", "resolved"), finding("b2", "unresolved")],
+        ),
+        verdict_obj(
+            "REQUIRES_CHANGES",
+            round_number=3,
+            blockers=[
+                finding("b1", "resolved"),
+                finding("b2", "resolved"),
+                finding("b3", "unresolved"),
+            ],
+        ),
+    ]
+    home = install_fake_codex(tmp_path, [{"stdout": events(v)} for v in rounds])
+    assert run_main(monkeypatch, home, ["--new", "--repo", str(dirty_repo)]) == 10
+    first = tmp_path / "response1.md"
+    first.write_text(
+        response_text(1, [{"id": "b1", "disposition": "fixed", "reason": "patched"}])
+    )
+    args = ["--resume", "--repo", str(dirty_repo), "--response-file", str(first)]
+    assert run_main(monkeypatch, home, args) == 10
+    second = tmp_path / "response2.md"
+    second.write_text(
+        response_text(
+            2,
+            [
+                {"id": "b1", "disposition": "fixed", "reason": "patched"},
+                {"id": "b2", "disposition": "fixed", "reason": "patched"},
+            ],
+        )
+    )
+    args = ["--resume", "--repo", str(dirty_repo), "--response-file", str(second)]
+    code = run_main(monkeypatch, home, args)
+    assert code == 20
+    assert "human" in capsys.readouterr().err
+    dossier = dossier_path(dirty_repo).read_text()
+    assert "condition 1" in dossier
+    assert "b3" in dossier
+    assert "condition 2" not in dossier
+    assert "condition 3" not in dossier
+    state = read_state(dirty_repo)
+    assert state["round"] == 3
+    assert state["verdict"]["verdict"] == "REQUIRES_CHANGES"
+
+
+def test_response_file_for_the_wrong_round_fails(
+    dirty_repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """A response answering a round other than the recorded one exits 1."""
+    requires = verdict_obj("REQUIRES_CHANGES", blockers=[finding("b1")])
+    home = install_fake_codex(tmp_path, [{"stdout": events(requires)}])
+    assert run_main(monkeypatch, home, ["--new", "--repo", str(dirty_repo)]) == 10
+    response = tmp_path / "response.md"
+    response.write_text(
+        response_text(3, [{"id": "b1", "disposition": "fixed", "reason": "patched"}])
+    )
+    code = run_main(
+        monkeypatch,
+        home,
+        ["--resume", "--repo", str(dirty_repo), "--response-file", str(response)],
+    )
+    assert code == 1
+    assert "round" in capsys.readouterr().err
+    assert len(calls(home)) == 1
+    assert read_state(dirty_repo)["round"] == 1
+
+
+def test_response_file_requires_resume(
+    dirty_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """--response-file with --new is a usage error: no round to respond to."""
+    response = tmp_path / "response.md"
+    response.write_text(response_text(1, []))
+    with pytest.raises(SystemExit) as excinfo:
+        main(["--new", "--repo", str(dirty_repo), "--response-file", str(response)])
+    assert excinfo.value.code == 2
+    assert "no prior round" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "content",
+    [None, "prose without a dispositions block"],
+    ids=["missing", "no-block"],
+)
+def test_unusable_response_file_fails(
+    dirty_repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    content: str | None,
+) -> None:
+    """A missing or blockless response file exits 1 before any dispatch."""
+    requires = verdict_obj("REQUIRES_CHANGES", blockers=[finding("b1")])
+    home = install_fake_codex(tmp_path, [{"stdout": events(requires)}])
+    assert run_main(monkeypatch, home, ["--new", "--repo", str(dirty_repo)]) == 10
+    response = tmp_path / "response.md"
+    if content is not None:
+        response.write_text(content)
+    code = run_main(
+        monkeypatch,
+        home,
+        ["--resume", "--repo", str(dirty_repo), "--response-file", str(response)],
+    )
+    assert code == 1
+    assert "response" in capsys.readouterr().err
+    assert len(calls(home)) == 1
+    assert read_state(dirty_repo)["round"] == 1
+
+
+def test_packet_too_large_writes_a_dossier(
+    dirty_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Condition 4 leaves the same human-facing artifact as conditions 1-3."""
+    home = install_fake_codex(tmp_path, [])
+    code = run_main(
+        monkeypatch,
+        home,
+        ["--new", "--repo", str(dirty_repo), "--size-ceiling", "10"],
+    )
+    assert code == 20
+    assert "condition 4" in dossier_path(dirty_repo).read_text()
+    assert not state_path(dirty_repo).exists()
+
+
+def test_resume_after_escalation_is_refused(
+    dirty_repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """Escalation is terminal: --resume is refused, --new is the recovery.
+
+    Without this, a round-3 escalation could be followed by an ordinary
+    --resume dispatching round 4 - past the cap, and able to overwrite
+    the escalated state with an accepting verdict.
+    """
+    rounds = [
+        verdict_obj("REQUIRES_CHANGES", blockers=[finding("b1")]),
+        verdict_obj(
+            "REQUIRES_CHANGES",
+            round_number=2,
+            blockers=[finding("b1", "resolved"), finding("b2", "unresolved")],
+        ),
+        verdict_obj(
+            "REQUIRES_CHANGES",
+            round_number=3,
+            blockers=[
+                finding("b1", "resolved"),
+                finding("b2", "resolved"),
+                finding("b3", "unresolved"),
+            ],
+        ),
+    ]
+    home = install_fake_codex(
+        tmp_path,
+        [{"stdout": events(v)} for v in rounds]
+        + [{"stdout": events(verdict_obj(), thread="thread-codex-2")}],
+    )
+    assert run_main(monkeypatch, home, ["--new", "--repo", str(dirty_repo)]) == 10
+    first = tmp_path / "response1.md"
+    first.write_text(
+        response_text(1, [{"id": "b1", "disposition": "fixed", "reason": "patched"}])
+    )
+    args = ["--resume", "--repo", str(dirty_repo), "--response-file", str(first)]
+    assert run_main(monkeypatch, home, args) == 10
+    second = tmp_path / "response2.md"
+    second.write_text(
+        response_text(
+            2,
+            [
+                {"id": "b1", "disposition": "fixed", "reason": "patched"},
+                {"id": "b2", "disposition": "fixed", "reason": "patched"},
+            ],
+        )
+    )
+    args = ["--resume", "--repo", str(dirty_repo), "--response-file", str(second)]
+    assert run_main(monkeypatch, home, args) == 20
+    capsys.readouterr()
+    code = run_main(monkeypatch, home, ["--resume", "--repo", str(dirty_repo)])
+    assert code == 1
+    assert "--new" in capsys.readouterr().err
+    assert len(calls(home)) == 3
+    assert read_state(dirty_repo)["round"] == 3
+    code = run_main(monkeypatch, home, ["--new", "--repo", str(dirty_repo)])
+    assert code == 0
+    state = read_state(dirty_repo)
+    assert state["round"] == 1
+    assert state["thread_id"] == "thread-codex-2"
+    assert "escalated" not in state
+
+
+def test_remediation_resume_requires_a_response_file(
+    dirty_repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """Resuming past REQUIRES_CHANGES without dispositions is refused.
+
+    Conditions 2 and 3 key on the coder's claims; a resume that omits
+    them would silently disable both comparisons.
+    """
+    requires = verdict_obj("REQUIRES_CHANGES", blockers=[finding("b1")])
+    home = install_fake_codex(tmp_path, [{"stdout": events(requires)}])
+    assert run_main(monkeypatch, home, ["--new", "--repo", str(dirty_repo)]) == 10
+    code = run_main(monkeypatch, home, ["--resume", "--repo", str(dirty_repo)])
+    assert code == 1
+    assert "--response-file" in capsys.readouterr().err
+    assert len(calls(home)) == 1
+    assert read_state(dirty_repo)["round"] == 1
+
+
+@pytest.mark.parametrize(
+    ("answered", "complaint"),
+    [
+        (["b1"], "b2"),
+        (["b1", "b2", "bogus"], "bogus"),
+    ],
+    ids=["missing-id", "unknown-id"],
+)
+def test_remediation_response_must_cover_every_finding(
+    dirty_repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+    answered: list[str],
+    complaint: str,
+) -> None:
+    """The T5 contract: every finding id answered exactly once.
+
+    A partial response could omit exactly the claimed-fixed or rejected
+    blocker whose comeback conditions 2 and 3 key on.
+    """
+    requires = verdict_obj("REQUIRES_CHANGES", blockers=[finding("b1"), finding("b2")])
+    home = install_fake_codex(tmp_path, [{"stdout": events(requires)}])
+    assert run_main(monkeypatch, home, ["--new", "--repo", str(dirty_repo)]) == 10
+    response = tmp_path / "response.md"
+    response.write_text(
+        response_text(
+            1,
+            [
+                {"id": fid, "disposition": "fixed", "reason": "patched"}
+                for fid in answered
+            ],
+        )
+    )
+    code = run_main(
+        monkeypatch,
+        home,
+        ["--resume", "--repo", str(dirty_repo), "--response-file", str(response)],
+    )
+    assert code == 1
+    assert complaint in capsys.readouterr().err
+    assert len(calls(home)) == 1
+    assert read_state(dirty_repo)["round"] == 1
+
+
+def test_resume_after_acceptance_needs_no_response(
+    dirty_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A voluntary re-review after acceptance has no blockers to answer."""
+    home = install_fake_codex(
+        tmp_path,
+        [
+            {"stdout": events(verdict_obj())},
+            {"stdout": events(verdict_obj("ACCEPTED", round_number=2))},
+        ],
+    )
+    assert run_main(monkeypatch, home, ["--new", "--repo", str(dirty_repo)]) == 0
+    code = run_main(monkeypatch, home, ["--resume", "--repo", str(dirty_repo)])
+    assert code == 0
+    assert read_state(dirty_repo)["round"] == 2

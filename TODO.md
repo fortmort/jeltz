@@ -15,7 +15,7 @@ a rulebook governing `jeltz` itself.
 Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer. Only three can enforce the gate.
 
-Status: T1-T12 complete; next task is T13.
+Status: T1-T13 complete; next task is T14.
 
 ---
 
@@ -1193,7 +1193,7 @@ file agree with the verdict in every fixture case.
 Delivered: `review/run.py` (107 statements, 100% coverage) behind
 `review/run.sh`, a thin POSIX wrapper that resolves the checkout and execs
 the module (`python3 -c`, so there is no uncoverable `__main__` block);
-17 tests (22 instances) in `tests/test_run.py`, driven in-process plus one
+20 tests (25 instances) in `tests/test_run.py`, driven in-process plus one
 end-to-end run of `run.sh` itself, all through a scripted fake codex binary
 on PATH - no test contacts a real backend. Makefile `SH_SOURCES` now
 wildcards `review/*.sh` so the wrapper sits under shellcheck/shfmt.
@@ -1246,11 +1246,70 @@ Hardened after review (one blocker, reproduced red):
   same-thread repair, then failure with no state write. Tested for --new
   and --resume, including the repaired-on-thread success path.
 
-#### T13. Escalation policy engine
-- All four termination conditions from 4.2.
-- Escalation dossier: disputed blockers, both sides' positions, round history.
-Acceptance: each condition is independently triggerable; the dossier names the
-specific disagreement.
+#### T13. Escalation policy engine - DONE
+Goal was: all four termination conditions from 4.2, plus the escalation
+dossier (disputed blockers, both sides' positions, round history), each
+condition independently triggerable.
+
+Delivered: `review/escalation.py` (engine, 128 statements) plus wiring in
+`review/run.py` (now 153 statements); behavior pinned by 22 tests
+(33 instances) in `tests/test_escalation.py` and 10 new orchestrator tests
+(13 instances) in `tests/test_run.py`. All `review/` modules hold the 100%
+coverage gate.
+
+Behavior:
+- `parse_response` extracts the coder's T5 section E disposition block from
+  either bare JSON or full fixer output, keying detection on the pinned
+  `dispositions` key so a verdict block in the same output is never
+  mistaken for the response, and validates it (schema_version 1, integer
+  round, enum `fixed` / `rejected-invalid` / `deferred-non-blocker`,
+  non-empty unique ids, per-entry reason).
+- `evaluate(state, response)` joins the response against the round's
+  verdict by stable finding ids and decides conditions 1-3:
+  condition 1 when round >= 3 (`MAX_ROUNDS`) and the verdict is still
+  REQUIRES_CHANGES; condition 2 (thrash) when a `fixed` id comes back
+  not-resolved, or the reviewer itself marks a blocker `regressed`;
+  condition 3 (dispute) when a `rejected-invalid` id comes back at all -
+  even listed as `resolved`, since that claims a fix that never happened.
+  All triggered conditions are reported together; each disputed blocker
+  appears exactly once, carrying both sides' positions verbatim.
+- `packet_escalation` covers condition 4, and `render_dossier` writes the
+  human tiebreak dossier: conditions, per-blocker coder/reviewer
+  positions, and the round history (or "no completed rounds").
+- `review/run.sh` gains `--response-file` (resume-only; with `--new` it is
+  a usage error, exit 2). The file is read and validated before dispatch -
+  unreadable, blockless, or answering the wrong round is an operational
+  failure (exit 1) that never contacts the reviewer.
+- Every escalation exits 20 and writes `.jeltz/review/escalation.md`.
+  Conditions 1-3 still record the round's state first (the round did
+  complete; T14's gate needs it); condition 4 keeps writing no state.
+
+Decisions recorded:
+- **Escalation is a policy outcome, not a failure**: state is written
+  before the exit-20 decision, so an escalated review is resumable by a
+  human without losing the thread or the history.
+- **`regressed` alone is thrash**: the reviewer marking a blocker
+  regressed testifies that a previously resolved finding broke again,
+  so condition 2 fires even when no response file was supplied.
+- **The fenced-JSON pattern is shared**: `review/verdict.py` now exports
+  `FENCED_JSON` and both extractors (verdict, response) use it, keeping
+  the two halves of the wire format in lockstep.
+
+Hardened after review (two blockers, both reproduced red):
+- **Escalation is terminal.** The escalating round's state gains an
+  `escalated` marker (the triggered conditions, recorded in the same
+  atomic write as the round), and `_plan_round` refuses to resume past
+  it - so round 4 can never run, let alone launder an escalated review
+  into an exit-0 acceptance. Recovery is a human tiebreak followed by
+  `--new`. Condition 4 needs no marker: no round ran, no state changed,
+  and re-running the same command deterministically re-escalates.
+- **Response evidence is mandatory and complete.** A resume past
+  REQUIRES_CHANGES without `--response-file` is refused (conditions 2-3
+  would otherwise be silently disabled), and `verify_coverage` enforces
+  the T5 exactly-once contract before dispatch: every finding id from
+  the prior verdict answered, no unknown ids. A voluntary re-review
+  after acceptance still needs no response - there is nothing to answer.
+  `_load_state` now also requires the recorded verdict itself.
 
 ### Phase 3 - enforcement
 
