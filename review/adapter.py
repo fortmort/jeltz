@@ -52,11 +52,36 @@ class ToolPolicy:
 
 @dataclass(frozen=True)
 class ReviewResult:
-    """One review round's outcome: the T7 contract tuple."""
+    """One review round's outcome: the T7 contract tuple.
+
+    `costs` carries the round's per-turn backend telemetry (e.g. grok's
+    total_cost_usd and usage, T10) in turn order - part of review state
+    so a host-neutral writer can persist it; hosts that report nothing
+    leave it empty.
+    """
 
     verdict: dict[str, Any]
     thread_id: str
     raw: str
+    costs: tuple[dict[str, Any], ...] = ()
+
+
+def fence_bare_verdict(raw: str) -> str:
+    """Wrap a bare schema-constrained verdict in the fence T4 parses.
+
+    Hosts whose native schema enforcement emits the verdict as a bare
+    JSON object (codex --output-schema, grok --json-schema) share this
+    normalization. Output already carrying prose or a fence is returned
+    untouched; only a message that is itself a verdict-shaped JSON object
+    gets wrapped.
+    """
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+    if isinstance(data, dict) and "schema_version" in data:
+        return f"```json\n{raw}\n```\n"
+    return raw
 
 
 def tool_policy(host: str) -> ToolPolicy:
@@ -85,6 +110,17 @@ class ReviewerAdapter(ABC):
     contract so no adapter can skip the positive-output assertion or the
     repair protocol.
     """
+
+    _round_costs: list[dict[str, Any]]
+
+    def _record_cost(self, entry: dict[str, Any]) -> None:
+        """Record one backend turn's cost/usage telemetry for the round.
+
+        Hosts that report telemetry (grok, T10) call this from `_send`;
+        the template method attaches the round's entries to its
+        ReviewResult so they enter review state with the verdict.
+        """
+        self._round_costs.append(entry)
 
     @abstractmethod
     def _send(
@@ -141,6 +177,7 @@ class ReviewerAdapter(ABC):
             raise ValueError("resume mode requires a thread id")
         if mode == "new" and thread_id is not None:
             raise ValueError("new mode must not carry a thread id")
+        self._round_costs = []
         raw, tid = self._send(packet.render(), worktree, thread_id)
         if mode == "resume" and tid != thread_id:
             raise ThreadContinuityError(
@@ -164,6 +201,7 @@ class ReviewerAdapter(ABC):
             verdict=verdict,
             thread_id=tid,
             raw=repaired[-1] if repaired else raw,
+            costs=tuple(self._round_costs),
         )
 
 

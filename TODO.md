@@ -15,7 +15,7 @@ a rulebook governing `jeltz` itself.
 Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer. Only three can enforce the gate.
 
-Status: T1-T9 complete; next task is T10.
+Status: T1-T10 complete; next task is T11.
 
 ---
 
@@ -561,7 +561,11 @@ Adapter findings from the spike (feed into T8-T11):
   verdict presence, never on exit status). Rules use `Bash(...)/Read(...)`
   prefixes; `--allow Read --allow "Bash(git*)"` was not sufficient for a
   full review; `--always-approve --deny Edit --deny Write` completed in 6
-  turns at $0.12. Flag placement: `--max-turns` before `-p`.
+  turns at $0.12. Flag placement: `--max-turns` before `-p`. (Resolved in
+  T10: the adapter sidesteps permission rules entirely by passing the
+  shipped allow list as `--tools` - grok's built-in tool allowlist, under
+  which a headless Bash call completes with `end_turn`, verified live -
+  and asserts on the envelope's stopReason, never exit status.)
 
 #### T4. Verdict schema and parser - DONE
 Goal: the verdict block becomes a contract code can enforce, not a convention.
@@ -1007,19 +1011,106 @@ Hardened after review (two blockers):
   a missing id - ThreadContinuityError via the template method -
   reproduced test-first with the reviewer's payload.
 
-#### T10. Grok adapter
-- `grok -p --output-format json --json-schema <schema>`, `--resume <id>` for
-  re-review (D1).
-- `--tools` allowlist excluding `search_replace`. This narrows the path to an
-  edit; it does not close it, because `bash` stays enabled for `make verify`.
-  D5 is enforced by T6's integrity check (R7).
-- No install step needed: grok reads `.claude/skills/` and `~/.claude/skills/`
-  natively (3.5). Assert this in the adapter's preflight rather than assuming.
-- Record `total_cost_usd` and `usage` into review state - grok reports both,
-  which makes it the best host for calibrating the round budget.
-Acceptance: fresh review and resumed re-review both work; a shell-issued edit
-in the review checkout is caught by the integrity check rather than by the
-allowlist.
+#### T10. Grok adapter - DONE
+Goal was: the grok backend behind the T7 template method, with preflighted
+skill discovery and per-turn cost recording.
+
+Delivered: `review/grok.py` (67 statements, 100% coverage) and
+`tests/test_grok_adapter.py` (33 tests against a scripted fake grok
+speaking the live-probed 1.0.4 envelope dialect). The shared
+bare-verdict-fencing normalization moved to `review/adapter.py` as
+`fence_bare_verdict` (codex and grok both emit schema-constrained output
+bare; the codex adapter now imports it - behavior unchanged, pinned by
+both hosts' suites).
+
+Behavior:
+- Fresh review: preflight `grok inspect --json` runs in the review
+  checkout and raises a typed error unless the machine-readable skills
+  array contains an exact, enabled `skeptical-reviewer` entry (3.5: no
+  install step exists, so discovery is asserted, not assumed; probed
+  live - a project `.claude/skills/` copy lists with source type
+  `project`, ahead of any user copy). Then
+  `grok --tools Read,Grep,Glob,Bash --always-approve --output-format json
+  --json-schema <canonical schema INLINE as a JSON string - a file path
+  is rejected> -p "/skeptical-reviewer HEAD\n\n<sequencing
+  instruction>\n\n<packet>"`. The allow list comes from
+  `tool-allowlists.json` at call time, so the shipped data stays the
+  single source (D6/T7: allowlists ship as data - grok is the host where
+  the data can actually be applied per-invocation).
+- Re-review: same argv with `--resume <id>` prepended and no preflight or
+  skill re-framing; probed live, the envelope echoes the same sessionId
+  with context intact (D1).
+- Envelope handling: when `structuredOutput` is present its parsed object
+  is the verdict carrier (under tool use `text` concatenates the model's
+  message with the structured output - probed live - so text is
+  unreliable); otherwise `text` is used. Either way a bare verdict object
+  is fenced via the shared `fence_bare_verdict` for the T4 parser. A
+  non-string `sessionId` degrades to "" so the template method raises
+  ThreadContinuityError (the T9 round-2 lesson, baked in from the start).
+- Hard errors (all AdapterProcessError, never a verdict, never a hang):
+  spawn failure, timeout, nonzero exit, unparseable or non-object
+  envelope, non-string text, preflight failure or non-discovery, and the
+  T10-specific one - **any stopReason other than `end_turn`**, the live
+  signature of a run that died inside grok with exit 0 and
+  narration-only text (the T3 silent-cancel edge: assert on the
+  envelope, never on exit status). stdin is /dev/null.
+- Cost recording: every successful turn's `total_cost_usd`/`usage` land
+  on the round's `ReviewResult.costs` in turn order - review state a
+  host-neutral writer can persist alongside the verdict and thread id,
+  surviving separate per-round processes. The T7 contract grew a
+  `costs` tuple (default empty; codex/agy report nothing) and a
+  `_record_cost` hook on the base adapter. Envelopes reporting no
+  telemetry contribute no entry. The calibration data for the round
+  budget.
+
+Sharp edges resolved live (grok 1.0.4, 2026-08-16):
+- **Headless permission auto-cancel.** With only `--tools`, a non-git
+  bash command silently cancels the run (stopReason `cancelled`, exit 0,
+  num_turns 1); git commands complete because grok auto-approves its
+  built-in safe commands. The adapter therefore passes
+  `--always-approve`, bounded by `--tools` - the edit tools (Edit,
+  Write, `search_replace`) do not exist in the session at all, which is
+  strictly tighter than the spike's `--deny` pair. Bash can still write:
+  D5 is enforced by the T6 integrity check (R7), pinned by a test where
+  a fake-reviewer shell edit raises IntegrityError over an accepting
+  verdict.
+- **Schema-constrained placeholder verdicts.** Invoked with
+  --json-schema alone, the model emitted a schema-valid placeholder
+  verdict as its first message without running a single tool (blocker id
+  literally `placeholder`). The fresh-review framing now carries an
+  explicit sequencing instruction (review with tools first; the final
+  message is the complete verdict, never a placeholder), after which the
+  live run performed a full tool-using review.
+- **`text` vs `structuredOutput`.** See envelope handling above.
+
+Acceptance evidence (live two-round run through the real backend,
+2026-08-16): round 1 fresh review returned REQUIRES_CHANGES (round 1,
+blocker `shout-untested`, $0.101, 6013 output tokens - a genuine
+tool-using review); round 2 resumed via `--resume` and returned round 2
+on the SAME session with the same blocker id carried as `unresolved`
+(THREAD_PRESERVED True, $0.096); both turns' cost/usage were recorded.
+The shell-edit-caught-by-integrity-check clause is pinned at unit level
+(see above).
+
+Hardened after review (two blockers):
+- **Discovery is an exact parsed entry, not a substring.** The preflight
+  had substring-matched the human-readable `grok inspect` output, which
+  would also match a config warning that the skill failed to load
+  (reproduced by the reviewer). It now runs `grok inspect --json` and
+  requires an exact skills-array entry with `compatibilityStatus`
+  enabled; unparseable inspect output is a typed error. Reproduced
+  test-first with the reviewer's warning-text payload, plus
+  disabled-skill and prose-output cases; the new preflight verified
+  live against grok 1.0.4. (Round 2) A non-array `skills` member (JSON
+  null, a scalar) had escaped as raw TypeError; it is now failed
+  discovery, reproduced test-first with the reviewer's payloads.
+- **Telemetry enters review state through the contract.** cost_log had
+  been process-local adapter state a host-neutral writer could not
+  reach and separate per-round processes would lose; and missing
+  envelope fields were recorded as None placeholders. Per-turn entries
+  now ride on `ReviewResult.costs` (see Cost recording above) and
+  telemetry-free envelopes contribute nothing - both reproduced
+  test-first.
 
 #### T11. Claude adapter (fallback)
 - `claude -p "/skeptical-reviewer ..." --session-id $(uuidgen)

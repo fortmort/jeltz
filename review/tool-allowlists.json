@@ -19,7 +19,7 @@
     "grok": {
       "allow": ["Read", "Grep", "Glob", "Bash"],
       "deny": ["Edit", "Write", "search_replace"],
-      "notes": "T10: --deny Edit --deny Write verified live (T3 spike); search_replace is grok's native edit tool (3.5)."
+      "notes": "T10: allow entries are passed as --tools (comma-joined), grok's built-in tool allowlist - unlisted tools, including the deny names, simply do not exist in the session. Headless the adapter must also pass --always-approve: grok auto-approves only built-in safe commands (git), and the first other bash call is silently cancelled - stopReason cancelled, exit 0 (verified live, grok 1.0.4). Never use partial --allow permission rules: same silent end (T3 spike). Deny names (search_replace is grok's native edit tool, 3.5) are documentation and defence in depth only - Bash stays enabled for make verify, so D5 is enforced by the T6 integrity check (R7)."
     }
   }
 }

@@ -16,7 +16,11 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from review.adapter import AdapterProcessError, ReviewerAdapter
+from review.adapter import (
+    AdapterProcessError,
+    ReviewerAdapter,
+    fence_bare_verdict,
+)
 from review.verdict import strict_schema
 
 DEFAULT_TIMEOUT = 600.0
@@ -143,19 +147,4 @@ def _parse_stream(stdout: str) -> tuple[str, str]:
             if item.get("type") == "agent_message":
                 texts.append(item.get("text", ""))
     raw = texts[-1] if texts else ""
-    return _fence_bare_verdict(raw), thread_id
-
-
-def _fence_bare_verdict(raw: str) -> str:
-    """Wrap a bare schema-constrained verdict in the fence T4 parses.
-
-    Output already carrying prose or a fence is returned untouched; only a
-    message that is itself a verdict-shaped JSON object gets wrapped.
-    """
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        return raw
-    if isinstance(data, dict) and "schema_version" in data:
-        return f"```json\n{raw}\n```\n"
-    return raw
+    return fence_bare_verdict(raw), thread_id
