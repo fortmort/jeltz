@@ -15,7 +15,7 @@ a rulebook governing `jeltz` itself.
 Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer. Only three can enforce the gate.
 
-Status: T1-T10 complete; next task is T11.
+Status: T1-T11 complete; next task is T12.
 
 ---
 
@@ -1112,19 +1112,77 @@ Hardened after review (two blockers):
   telemetry-free envelopes contribute nothing - both reproduced
   test-first.
 
-#### T11. Claude adapter (fallback)
-- `claude -p "/skeptical-reviewer ..." --session-id $(uuidgen)
-  --output-format json --json-schema <schema> --tools "Read,Grep,Glob,Bash"`.
-  Omitting Edit and Write keeps consumer PostToolUse hooks from firing inside
-  the reviewer, but `Bash` can still write - D5 is enforced by T6's integrity
-  check (R7), not by this list.
-- Preflight per 3.7: refuse when `ANTHROPIC_API_KEY` is set unless
-  `--allow-api-billing` is passed. Never `--bare`.
-- Round 1 opens a new session with a generated `--session-id`; later rounds use
-  `--resume <id>` on that same session (D1).
-Acceptance: preflight refuses by default with a clear message; each new review
-loop starts on a session id that did not previously exist, and re-reviews
-within a loop reuse it.
+#### T11. Claude adapter - DONE
+Goal was: the fallback claude backend behind the T7 template method, with
+the 3.7 billing preflight.
+
+Delivered: `review/claude.py` (50 statements, 100% coverage) and
+`tests/test_claude_adapter.py` (30 tests, 31 instances, against a scripted
+fake claude speaking the live-probed 2.1.233 envelope dialect, echoing
+the sent session id like the real CLI). All four
+adapters now share `run_backend` and the telemetry collector extracted
+into `review/adapter.py` during refactor (behavior unchanged; each
+adapter's private `_run` copy deleted).
+
+Behavior:
+- Preflight per 3.7: every invocation (fresh and resume alike) refuses
+  with a clear message while `ANTHROPIC_API_KEY` is set - it flips Claude
+  Code to API billing - unless the adapter was constructed with
+  `allow_api_billing=True`. The refusal fires before any spawn. Never
+  `--bare` (its auth is strictly API-key based).
+- Fresh review: `claude --session-id <generated uuid4> --tools
+  Read,Grep,Glob,Bash --output-format json --json-schema <draftless
+  canonical schema, inline> -p "/skeptical-reviewer HEAD\n\n<project-path
+  pointer>\n\n<packet>"`. The framing points at
+  `.claude/skills/skeptical-reviewer` explicitly - the T3 spike found a
+  user-scope copy of the same name shadows the project copy headless.
+- Re-review: same argv with `--resume <id>` instead of `--session-id`,
+  prompt sent raw. Probed live: the envelope echoes the same session_id
+  on both fresh and resumed runs, and `--resume` preserves context. A
+  fresh review verifies that echo against the generated id and raises
+  ThreadContinuityError on mismatch (D1: verified, not trusted) - only
+  the adapter knows the generated id, so this check cannot live in the
+  template method; the resume path stays with the template's check.
+- Envelope handling: `structured_output` (parsed object) is preferred as
+  the verdict carrier; bare-JSON `result` text is normalized by the
+  shared `fence_bare_verdict`; a missing or non-string `session_id`
+  degrades to "" so the template method raises ThreadContinuityError
+  (degrade-don't-duplicate). Per-turn `total_cost_usd`/`usage` ride
+  `ReviewResult.costs` via the shared telemetry collector.
+- Hard errors (all AdapterProcessError, never a verdict, never a hang):
+  API-key refusal, spawn failure, timeout (killed), nonzero exit (stderr
+  attached - probed live: an unknown --resume id exits 1 with stderr
+  only), unparseable or non-object envelope, non-string `result` without
+  structured output, and a failed run - `is_error` true or `subtype` not
+  `success`, either signal alone. stdin is /dev/null.
+
+Sharp edge resolved live: claude 2.1.233's `--json-schema` validator
+rejects any schema declaring the 2020-12 draft ("no schema with key or
+ref ..."), while the schema body - `$id` and `$defs` included - validates
+unchanged. `review/verdict.py` gained `draftless_schema()` (canonical
+minus the `$schema` declaration), reproduced test-first after the first
+live acceptance attempt failed on it.
+
+Acceptance evidence (live two-round run, 2026-08-16, claude 2.1.233):
+preflight refusal fired with "ANTHROPIC_API_KEY is set: claude would run
+on API billing (3.7); unset it or opt in with --allow-api-billing";
+round 1 opened fresh session b7275069-45a3-42ab-bcc9-de3f94ffbcf1 and
+returned REQUIRES_CHANGES with three genuine blockers (shout-no-tests,
+print-in-production, missing-type-hints; $0.748, 6937 output tokens);
+round 2 resumed the same session, round 2, all three blockers carried
+`unresolved`, THREAD_PRESERVED True ($0.529). Both turns' cost/usage
+landed on `ReviewResult.costs`.
+
+Hardened after review (one blocker): the generated `--session-id` had
+been discarded after sending - any nonempty envelope session_id was
+accepted as the thread, so a backend answering on an existing or
+unrelated session would have been silently resumed by every later
+round. Reproduced test-first with an unechoed-session fake (review
+succeeded pre-fix); the fresh path now retains the generated id and
+raises ThreadContinuityError on an echo mismatch, the fake echoes the
+sent id like the real CLI (live probe evidence: p1/p2 envelopes echo
+`--session-id`/`--resume` exactly), and the fresh-session and repair
+tests now assert the loop's thread ids ARE the generated ids.
 
 #### T12. Orchestrator: one round
 - `review/run.sh --new | --resume`: packet, worktree, dispatch, parse, state

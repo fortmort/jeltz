@@ -63,6 +63,23 @@ def load_schema() -> dict[str, Any]:
     return json.loads(SCHEMA_PATH.read_text())
 
 
+def draftless_schema() -> dict[str, Any]:
+    """Derive the variant claude --json-schema requires (T11).
+
+    Verified live against claude 2.1.233: its validator rejects any
+    schema declaring the 2020-12 draft ("no schema with key or ref
+    https://json-schema.org/draft/2020-12/schema"), while the schema
+    body - $id and $defs included - validates unchanged. Dropping the
+    declaration is the whole transform.
+
+    Returns:
+        A copy of the canonical schema without its $schema declaration.
+    """
+    schema = load_schema()
+    del schema["$schema"]
+    return schema
+
+
 def validate_verdict(data: dict[str, Any]) -> None:
     """Validate a parsed verdict object against the shipped schema.
 

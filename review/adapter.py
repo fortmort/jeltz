@@ -12,6 +12,7 @@ allowlists ship as config (R6) but are defence in depth only.
 """
 
 import json
+import subprocess
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -82,6 +83,67 @@ def fence_bare_verdict(raw: str) -> str:
     if isinstance(data, dict) and "schema_version" in data:
         return f"```json\n{raw}\n```\n"
     return raw
+
+
+def run_backend(
+    host: str, argv: list[str], worktree: Path, timeout: float
+) -> tuple[str, str]:
+    """Execute a reviewer backend CLI, mapping every transport failure to
+    a typed error (D6: every adapter is a subprocess transport).
+
+    Args:
+        host: The host name, used in error messages.
+        argv: Full command line; argv[0] is the configured binary.
+        worktree: The review checkout; the backend runs with it as cwd
+            and /dev/null as stdin so it can never stall on the caller's.
+        timeout: Seconds before a hung backend is killed.
+
+    Returns:
+        The process's stdout and stderr.
+
+    Raises:
+        AdapterProcessError: If the binary cannot be spawned, exceeds the
+            timeout, or exits nonzero (stderr carried in the message).
+    """
+    try:
+        proc = subprocess.run(
+            argv,
+            cwd=worktree,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except OSError as exc:
+        # FileNotFoundError, PermissionError, and every other spawn
+        # failure: the binary never ran, so this is transport, not
+        # verdict (T7 typed-error contract).
+        raise AdapterProcessError(
+            f"{host} could not be spawned ({argv[0]}): {exc}"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise AdapterProcessError(
+            f"{host} timed out after {timeout}s and was killed"
+        ) from exc
+    if proc.returncode != 0:
+        raise AdapterProcessError(
+            f"{host} exited {proc.returncode}: {proc.stderr.strip()}"
+        )
+    return proc.stdout, proc.stderr
+
+
+def telemetry(data: dict[str, Any]) -> dict[str, Any]:
+    """Collect the per-turn cost/usage fields a backend envelope reports.
+
+    Hosts whose envelopes carry billing telemetry (grok, claude) share
+    this collector; fields the envelope omits contribute nothing, so a
+    telemetry-free envelope yields an empty dict and no cost entry.
+    """
+    return {
+        key: value
+        for key in ("total_cost_usd", "usage")
+        if (value := data.get(key)) is not None
+    }
 
 
 def tool_policy(host: str) -> ToolPolicy:

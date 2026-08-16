@@ -18,7 +18,6 @@ round budget.
 """
 
 import json
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +25,8 @@ from review.adapter import (
     AdapterProcessError,
     ReviewerAdapter,
     fence_bare_verdict,
+    run_backend,
+    telemetry,
     tool_policy,
 )
 from review.verdict import load_schema
@@ -101,7 +102,7 @@ class GrokAdapter(ReviewerAdapter):
                 prompt,
             ]
         )
-        stdout, stderr = self._run(argv, worktree)
+        stdout, stderr = run_backend("grok", argv, worktree, self.timeout)
         text, session, cost = _parse_envelope(stdout, stderr)
         if cost:
             self._record_cost(cost)
@@ -119,7 +120,9 @@ class GrokAdapter(ReviewerAdapter):
                 unparseable output, or its skills array has no enabled
                 skeptical-reviewer entry.
         """
-        stdout, _ = self._run([self.grok_bin, "inspect", "--json"], worktree)
+        stdout, _ = run_backend(
+            "grok", [self.grok_bin, "inspect", "--json"], worktree, self.timeout
+        )
         try:
             data = json.loads(stdout)
         except json.JSONDecodeError as exc:
@@ -142,31 +145,6 @@ class GrokAdapter(ReviewerAdapter):
             "grok does not discover an enabled skeptical-reviewer skill "
             f"in the review checkout ({worktree})"
         )
-
-    def _run(self, argv: list[str], worktree: Path) -> tuple[str, str]:
-        """Execute grok, mapping every transport failure to a typed error."""
-        try:
-            proc = subprocess.run(
-                argv,
-                cwd=worktree,
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-            )
-        except OSError as exc:
-            raise AdapterProcessError(
-                f"grok could not be spawned ({self.grok_bin}): {exc}"
-            ) from exc
-        except subprocess.TimeoutExpired as exc:
-            raise AdapterProcessError(
-                f"grok timed out after {self.timeout}s and was killed"
-            ) from exc
-        if proc.returncode != 0:
-            raise AdapterProcessError(
-                f"grok exited {proc.returncode}: {proc.stderr.strip()}"
-            )
-        return proc.stdout, proc.stderr
 
 
 def _parse_envelope(stdout: str, stderr: str) -> tuple[str, str, dict[str, Any]]:
@@ -212,9 +190,4 @@ def _parse_envelope(stdout: str, stderr: str) -> tuple[str, str, dict[str, Any]]
         # resume argv), so it degrades exactly like a missing one: the
         # template method raises ThreadContinuityError (D1).
         session = ""
-    cost = {
-        key: value
-        for key in ("total_cost_usd", "usage")
-        if (value := data.get(key)) is not None
-    }
-    return text, session, cost
+    return text, session, telemetry(data)

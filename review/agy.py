@@ -14,10 +14,9 @@ AdapterProcessError carrying that stderr note, never a silent pass.
 """
 
 import json
-import subprocess
 from pathlib import Path
 
-from review.adapter import AdapterProcessError, ReviewerAdapter
+from review.adapter import AdapterProcessError, ReviewerAdapter, run_backend
 from review.verdict import SCHEMA_PATH
 
 DEFAULT_TIMEOUT = 600.0
@@ -81,33 +80,8 @@ class AgyAdapter(ReviewerAdapter):
             argv.append("--new-project")
         else:
             argv.extend(["--conversation", thread_id])
-        stdout, stderr = self._run(argv, worktree)
+        stdout, stderr = run_backend("agy", argv, worktree, self.timeout)
         return _parse_envelope(stdout, stderr)
-
-    def _run(self, argv: list[str], worktree: Path) -> tuple[str, str]:
-        """Execute agy, mapping every transport failure to a typed error."""
-        try:
-            proc = subprocess.run(
-                argv,
-                cwd=worktree,
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-            )
-        except OSError as exc:
-            raise AdapterProcessError(
-                f"agy could not be spawned ({self.agy_bin}): {exc}"
-            ) from exc
-        except subprocess.TimeoutExpired as exc:
-            raise AdapterProcessError(
-                f"agy timed out after {self.timeout}s and was killed"
-            ) from exc
-        if proc.returncode != 0:
-            raise AdapterProcessError(
-                f"agy exited {proc.returncode}: {proc.stderr.strip()}"
-            )
-        return proc.stdout, proc.stderr
 
 
 def _parse_envelope(stdout: str, stderr: str) -> tuple[str, str]:

@@ -12,14 +12,13 @@ AdapterProcessError, never a verdict and never a hang.
 """
 
 import json
-import subprocess
 import tempfile
 from pathlib import Path
 
 from review.adapter import (
-    AdapterProcessError,
     ReviewerAdapter,
     fence_bare_verdict,
+    run_backend,
 )
 from review.verdict import strict_schema
 
@@ -91,36 +90,8 @@ class CodexAdapter(ReviewerAdapter):
                     schema_file.name,
                     prompt,
                 ]
-            stdout = self._run(argv, worktree)
+            stdout, _ = run_backend("codex", argv, worktree, self.timeout)
         return _parse_stream(stdout)
-
-    def _run(self, argv: list[str], worktree: Path) -> str:
-        """Execute codex, mapping every transport failure to a typed error."""
-        try:
-            proc = subprocess.run(
-                argv,
-                cwd=worktree,
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
-                timeout=self.timeout,
-            )
-        except OSError as exc:
-            # FileNotFoundError, PermissionError, and every other spawn
-            # failure: the binary never ran, so this is transport, not
-            # verdict (T7 typed-error contract).
-            raise AdapterProcessError(
-                f"codex could not be spawned ({self.codex_bin}): {exc}"
-            ) from exc
-        except subprocess.TimeoutExpired as exc:
-            raise AdapterProcessError(
-                f"codex timed out after {self.timeout}s and was killed"
-            ) from exc
-        if proc.returncode != 0:
-            raise AdapterProcessError(
-                f"codex exited {proc.returncode}: {proc.stderr.strip()}"
-            )
-        return proc.stdout
 
 
 def _parse_stream(stdout: str) -> tuple[str, str]:
