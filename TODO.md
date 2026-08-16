@@ -15,7 +15,7 @@ a rulebook governing `jeltz` itself.
 Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer. Only three can enforce the gate.
 
-Status: T1-T8 complete; next task is T9.
+Status: T1-T9 complete; next task is T10.
 
 ---
 
@@ -172,10 +172,28 @@ flag.
 
 **Sharp edge 2 - permission denial is a silent success.** When a skill needs a
 tool call headless mode cannot prompt for, the run is auto-denied and returns
-`status: "SUCCESS"` with `response: ""`, with only a stderr note. An adapter
-that trusts `status` will record an empty review as a pass. The correct fix is
-an allow-rule under `permissions.allow`, not `--dangerously-skip-permissions`;
-the exact schema and file location are unresolved (T9).
+`status: "SUCCESS"` with `response: ""` (or the `response` key omitted - agy
+drops empty JSON keys), with only a stderr note. An adapter that trusts
+`status` will record an empty review as a pass. The correct fix is an
+allow-rule under `permissions.allow`, not `--dangerously-skip-permissions`.
+Resolved by the T9 probe (agy 1.1.13, live):
+- **Syntax:** grant strings of the form `command(<target>)`, matched by
+  command prefix (`command(git)` covers `git log`, `git status`, ...). The
+  spelling comes from agy's own denial message and its hooks contract
+  (`permissionOverrides: ["command(npm test)"]`). File-read tools are
+  auto-allowed headless; only `command` (and edit) permissions deny.
+- **Location:** the user-global `~/.gemini/antigravity-cli/settings.json`
+  (the file agy's vendor docs name as *the* CLI configuration), under
+  `permissions.allow`. A project-scoped `.agents/settings.json` carrying
+  the same schema does NOT take - probed live with the correct syntax in
+  both a trusted and an untrusted workspace, denial persisted in both.
+- **Verified live (2026-08-16):** with
+  `"permissions": {"allow": ["command(git)", "command(make)"]}` added to
+  the user-global settings.json (applied by the human - the session's
+  harness rightly blocks an agent from editing permission config), the
+  exact probe that had been auto-denied ran to a full response with no
+  stderr note, and a complete two-round review ran end to end under the
+  allowlist (see T9 acceptance evidence).
 
 **Sharp edge 3 - workspace trust.** `~/.gemini/antigravity-cli/settings.json`
 carries a `trustedWorkspaces` list. Consumer projects must be trusted.
@@ -533,7 +551,8 @@ Adapter findings from the spike (feed into T8-T11):
   skill path explicitly (or user installs must be kept current).
 - **agy:** headless `command` permission is auto-denied (3.4 sharp edge 2
   reconfirmed); a project `.agents/settings.json` `permissions.allow`
-  guess did NOT take (schema still unresolved, T9). Workaround that
+  guess did NOT take (resolved in T9: the syntax was close, but the file
+  must be the user-global settings.json - see 3.4). Workaround that
   produced a full review: instruct file-tool-only review. Also: agy omits
   empty JSON keys unless told not to.
 - **grok:** with partial `--allow` rules, the first tool call outside the
@@ -904,16 +923,89 @@ Hardened after review (two blockers):
   silent rewrite: recorded above with its rationale and rejection path, and
   bound to the human acceptance of this task.
 
-#### T9. Antigravity adapter
-- `agy -p --output-format json --json-schema <schema> --model gemini-3.1-pro-*`,
-  with explicit project context (3.4 sharp edge 1).
-- Empty `response` is a hard error (3.4 sharp edge 2).
-- Resolve the `permissions.allow` schema and file location so the reviewer gets
-  read and command permissions without `--dangerously-skip-permissions`.
-- `--conversation <id>` for re-review (D1).
-- Document the workspace trust requirement for consumer repos.
-Acceptance: a review runs end to end with an allowlist rather than blanket
-approval; a permission denial fails loudly.
+#### T9. Antigravity adapter - DONE
+Goal was: the agy backend behind the T7 template method, plus resolving the
+`permissions.allow` schema.
+
+Delivered: `review/agy.py` (46 statements, 100% coverage) and
+`tests/test_agy_adapter.py` (20 tests against a scripted fake agy speaking
+the live-probed 1.1.13 envelope dialect). The resolved permissions schema
+is recorded in 3.4 sharp edge 2 and reflected in
+`review/tool-allowlists.json` (agy allow entries are now real
+`command(<target>)` grant strings; deny names are agy's native
+`edit_file`/`write_to_file`, pinned by test).
+
+Behavior:
+- Fresh review: `agy -p "/skeptical-reviewer HEAD\n\n<packet>"
+  --output-format json --json-schema <canonical schema path>
+  --model gemini-3.1-pro-high --new-project`. The canonical (not strict)
+  schema ships verbatim as the --json-schema file, per the T4 live probe;
+  `--new-project` is mandatory or project skills do not load (sharp
+  edge 1). Model default is `gemini-3.1-pro-high` (spec: gemini-3.1-pro-*;
+  ids verified via `agy models`).
+- Re-review: same argv with `--conversation <id>` instead of
+  `--new-project`, prompt sent raw (no skill re-framing on an existing
+  conversation, mirroring T8). Probed live: the envelope echoes the same
+  `conversation_id` and increments `num_turns`, and resume works without
+  `--new-project` because the conversation carries its project.
+- Envelope handling: `response` passes to the T4 parser verbatim - agy
+  fences verdict JSON itself (T4 probe), so unlike codex there is no
+  normalization step. `conversation_id` is the thread id; a missing id
+  degrades to "" so the template method raises ThreadContinuityError
+  (degrade-don't-duplicate).
+- Hard errors (all AdapterProcessError, never a verdict, never a hang):
+  spawn failure (OSError superclass), timeout (killed), nonzero exit
+  (stderr attached), unparseable envelope, non-SUCCESS status, and the
+  T9-specific one - **SUCCESS with an empty or missing `response`**,
+  which is the live signature of a headless permission denial (sharp
+  edge 2). This check deliberately lives in the adapter rather than
+  deferring to the template method's EmptyOutputError: the denial reason
+  exists only on stderr, which only the adapter can see, so the typed
+  error carries it. stdin is /dev/null (same hazard class T8 hit live).
+
+Decisions:
+- Skill framing is the slash-command spelling `/skeptical-reviewer HEAD`
+  (agy expands slash commands in print mode; codex's `$skill` spelling is
+  codex-specific).
+- `--print-timeout` is left at agy's default; the subprocess timeout is
+  the engine's own enforcement, and a self-terminated agy surfaces
+  through the status/empty-response checks anyway.
+
+Acceptance evidence (live, agy 1.1.13, 2026-08-16):
+- "A permission denial fails loudly": the denial probe reproduced sharp
+  edge 2 exactly (SUCCESS + empty response + stderr-only reason); the
+  adapter's typed error path is pinned by tests carrying the real stderr
+  denial text.
+- "Review runs end to end with an allowlist": after the human added
+  `permissions.allow: ["command(git)", "command(make)"]` to the
+  user-global settings.json (the harness rightly blocks an agent from
+  editing permission config), the previously denied probe ran to a full
+  response, and a two-round `conduct_review` acceptance run completed
+  through the real backend with no blanket approval: round 1 fresh
+  review returned REQUIRES_CHANGES (round 1, blocker `shout_placement`),
+  round 2 resumed via `--conversation` and returned round 2 with the
+  same blocker id on the SAME conversation (THREAD_PRESERVED True).
+  Sharp edge 3 (workspace trust) is confirmed as user-global config in
+  the same file.
+
+Hardened after review (two blockers):
+- **Allowlisted acceptance run executed and recorded** (above) - the
+  completing commit had honestly declared it pending; the reviewer
+  correctly held T9 open until the positive evidence existed.
+- **The envelope boundary validates shape, not just syntax.** Valid JSON
+  that is not an object (`[]`, `null`) and a null `response` under
+  SUCCESS escaped as raw AttributeError, contradicting the documented
+  typed-error guarantee; a null response is materially an empty response
+  under sharp edge 2. All three now map to AdapterProcessError (the null
+  response through the loud denial path), reproduced test-first with the
+  reviewer's exact payloads, and a null `conversation_id` is normalized
+  so it degrades to the template method's ThreadContinuityError.
+- **(Round 2) Any non-string `conversation_id` degrades, not just null.**
+  A truthy non-string id (e.g. the integer 123) had slipped through into
+  ReviewResult.thread_id, where a later resume would splice it into
+  subprocess argv and die as raw TypeError. It now degrades exactly like
+  a missing id - ThreadContinuityError via the template method -
+  reproduced test-first with the reviewer's payload.
 
 #### T10. Grok adapter
 - `grok -p --output-format json --json-schema <schema>`, `--resume <id>` for

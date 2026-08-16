@@ -12,9 +12,9 @@
       "notes": "T8: expressed via --sandbox scoped to the review worktree. shell can still write (R7)."
     },
     "agy": {
-      "allow": ["read", "grep", "command"],
-      "deny": ["write", "edit"],
-      "notes": "T9: permissions.allow schema unresolved; tool names are provisional until the T9 probe."
+      "allow": ["command(git)", "command(make)"],
+      "deny": ["edit_file", "write_to_file"],
+      "notes": "T9: allow entries are permissions.allow grant strings (prefix-matched, e.g. command(git) covers git log) for the user-global ~/.gemini/antigravity-cli/settings.json; file-read tools are auto-allowed headless and need no grant. Deny names are agy's native edit tools, defence in depth only - D5 is enforced by the T6 integrity check (R7)."
     },
     "grok": {
       "allow": ["Read", "Grep", "Glob", "Bash"],

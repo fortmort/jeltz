@@ -232,6 +232,7 @@ def test_edit_tools_are_denied_per_host() -> None:
     assert {"Edit", "Write"} <= set(tool_policy("claude").deny)
     assert {"Edit", "Write", "search_replace"} <= set(tool_policy("grok").deny)
     assert "apply_patch" in tool_policy("codex").deny
+    assert {"edit_file", "write_to_file"} <= set(tool_policy("agy").deny)
 
 
 def test_unknown_host_is_rejected() -> None:
