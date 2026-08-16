@@ -99,7 +99,7 @@ a second injection data point in T10 if wanted.
 
 Verified 2026-08-14 against codex-cli **0.147.0**, Claude Code **2.1.232**,
 antigravity `agy` **1.1.13**, and grok **1.0.4**. Version-pinned; re-verify
-before relying on them (section 9).
+before relying on them (section 8).
 
 ### 3.1 The codex MCP server is generic, not a hardcoded reviewer
 
@@ -1272,7 +1272,196 @@ and no copy-paste.
 - README section on the review loop and installing the gate, per host and
   scope.
 - Config reference: backend, model, max rounds, size ceiling, opt-out.
-- Record how to re-verify section 3 (section 9) and against which versions.
+- Record how to re-verify section 3 (section 8) and against which versions.
+
+### Phase 5 - packaging, tooling, and hardening
+
+#### T22. Packaging baseline: pyproject.toml with split dependencies
+Goal: one declarative packaging file; requirements-dev.txt retired.
+- Add `pyproject.toml` with project metadata and dependencies split by
+  audience: production dependencies for running the shipped code
+  (`jsonschema` - `review/verdict.py` imports it at runtime in consumer
+  contexts, so it is NOT a dev dependency despite living in
+  requirements-dev.txt today) and a dev group for developing jeltz
+  itself (`pytest`, `pytest-cov`; `ruff` joins this group in T24, the
+  task that lands its config).
+- Point the Makefile's venv provisioning at pyproject.toml (still pip in
+  this task; the uv swap is T23) and delete requirements-dev.txt,
+  including the stamp dependency comment logic that references it.
+- Deliberately NO `[tool.ruff]` section in this task:
+  `hooks/lib/repo-mode.sh` derives strict mode from a git-TRACKED ruff
+  config, so the flip must land together with full-rules compliance
+  (T24), not as a packaging side effect (the exact hazard the T1 note in
+  the Makefile records).
+Acceptance: a fresh checkout provisions and passes `make verify` from
+pyproject.toml alone; requirements-dev.txt is gone; repo-mode detection
+still resolves jeltz to non-strict.
+
+#### T23. Move provisioning from pip to uv
+Goal: uv is the single installer for dev and CI use.
+- Makefile provisions with uv (venv creation and dependency sync from
+  pyproject.toml); commit the lockfile so installs are reproducible.
+- Keep the standard targets (`make lint/test/verify`) working unchanged
+  for callers; only the provisioning underneath changes.
+- Account for every tool the Makefile invokes: Python tooling (pytest,
+  pytest-cov, later ruff) is uv-provisioned from pyproject.toml;
+  `shellcheck` and `shfmt` are external Go/Haskell binaries no Python
+  package manager can provide, so they stay documented prerequisites -
+  and `make verify` must fail fast with a clear message naming any
+  missing one instead of a bare command-not-found.
+- Update README/bootstrap instructions; document the uv version floor
+  and the external prerequisites in one place.
+- License check for any new tooling per CLAUDE.md (uv itself is
+  MIT/Apache-2.0, install-time only, not a code dependency).
+Acceptance: a fresh checkout with uv plus the documented external
+binaries (shellcheck, shfmt) reaches a green `make verify`; every
+Python-ecosystem tool arrives via uv; no Makefile path invokes pip; a
+missing external prerequisite produces a named, actionable error.
+
+#### T24. Full ruff rules in pyproject.toml + Makefile lint
+Goal: the repo's own standard becomes the full ruff rule set; the
+abbreviated set stays where it belongs (the ruff.sh consumer hook, which
+keeps its narrow rules on purpose to avoid red/green/refactor thrash).
+- Add `ruff` to the pyproject dev dependency group (declared here, not
+  in T22, so the tool and its config land together and are provisioned
+  by uv like the rest of the Python tooling).
+- Add to pyproject.toml (jeltz-specific values filled in):
+  `[tool.ruff]` line-length 100, target-version py311, src = review and
+  tests; `[tool.ruff.lint]` select E, W, F, I, B, C4, UP, ARG, SIM;
+  ignore E501 (formatter's job) and B008; `[tool.ruff.lint.isort]`
+  known-first-party = review.
+- Bring the whole Python tree (review/, tests/, conftest.py) into
+  compliance with that full set in the same task: committing the tracked
+  `[tool.ruff]` section flips repo-mode.sh to strict for this tree the
+  moment it lands, so config and cleanup are one atomic change (the T1
+  ordering hazard, now on purpose).
+- `make lint` must run the full ruff (`ruff check` and
+  `ruff format --check`) alongside the existing shellcheck/shfmt; update
+  the Makefile header comment that currently documents the deliberate
+  absence of a tracked ruff config.
+- Do NOT touch the abbreviated rule list inside the shipped ruff.sh
+  hook - that is consumer-facing phase tooling, not the repo standard.
+Acceptance: `make verify` green with the full rule set enforced;
+repo-mode.sh now resolves jeltz to strict and the diff-aware hooks still
+behave (T1's tests keep passing); ruff.sh's shipped rule set unchanged.
+
+#### T25. shfmt formatting contract via .editorconfig
+Goal: `shfmt -d <sources>` reproduces committed formatting with no
+Makefile-side flags to remember.
+- Add a root .editorconfig: charset utf-8, lf, final newline, trimmed
+  trailing whitespace for all files; for `*.sh`: indent_style space,
+  indent_size 4, switch_case_indent true (shfmt reads these plus its own
+  extension keys).
+- Simplify the Makefile shfmt invocation to rely on .editorconfig
+  instead of inline `-i 4 -ci` flags; reformat any shell source the new
+  contract diffs.
+Acceptance: plain `shfmt -d` over SH_SOURCES is clean; `make lint`
+passes; the .editorconfig and Makefile agree on one formatting source of
+truth.
+
+#### T26. pytest and coverage gates move into pyproject.toml
+Goal: the 100% bar is declared configuration, not a Makefile incantation.
+- `[tool.pytest.ini_options]`: testpaths, addopts carrying the coverage
+  flags (`--cov=review --cov-report=term-missing --cov-fail-under=100`),
+  so any bare `pytest` run enforces the same gate `make test` does.
+- `[tool.coverage]` sections as needed (source, fail_under 100).
+- 100% passing is pytest's exit code; the gate must fail the run on any
+  failed, errored, or unexpectedly-skipped test.
+- Slim the Makefile test target to invoking pytest; behavior identical.
+Acceptance: `pytest` with no arguments and `make test` enforce the same
+100% coverage and 100% pass bar; a deliberately missed line, a failing
+test, and an unexpectedly-skipped test each fail both the same way.
+
+#### T27. install.sh security hardening: no recursive force-delete
+Goal: install.sh either acts safely or errors with a reason - it must
+never `rm -rf`.
+- Known dangers to remove (reviewed 2026-08-16): the
+  `rm -rf "${root:?}/$name"` in install_skills_into (line 52), the
+  `rm -rf "$repo/.agents/skills"` in project_install (line 124), and the
+  check-then-act race between the `[ -e ] && [ ! -L ]` test (line 123)
+  and that delete - the path can change between test and removal even in
+  a user-controlled directory.
+- Replace delete-then-copy with a safe strategy: only remove what jeltz
+  provably installed (e.g. validate against the manifest before touching
+  anything, remove files individually and directories with non-forced
+  rmdir), and on anything unexpected - unmanifested files, a directory
+  where a symlink should be, content that changed between inspection and
+  action - stop and tell the user exactly what was found and how to
+  resolve it manually.
+- Do a full defensive pass over the script while there: quoting, set -e
+  interactions, TOCTOU on every test-then-act pair, behavior on
+  hostile/degenerate paths.
+- Extend the pytest subprocess suite with the refusal cases (unexpected
+  file in a skill dir, real directory at the symlink location, manifest
+  mismatch) before rewriting - red first, per the loop.
+Acceptance: no `rm -rf` (or equivalent forced recursive delete) remains
+in install.sh; every refusal path is exercised by a test and produces an
+actionable error message; install/reinstall/check flows still pass the
+existing suite.
+
+### Phase 6 - branch closeout
+
+TODO.md is the working spec for this feature branch only; the squash
+commit will collapse the granular history, so the architectural and
+implementation documentation recorded here MUST be preserved in durable
+documents under docs/ (which does not exist yet) before the file is
+removed. The extraction is split into bounded, conversation-sized
+topics (T28-T30), each reorganized for a reader who never saw the
+TODOs - by topic, not by task number, keeping task-numbered acceptance
+evidence only where it documents a verified-against version. These run
+late deliberately: content is only stable once T12-T27 land.
+
+#### T28. docs/: architecture and decision log
+- Extract the problem statement (section 1), the decision log D1-D6
+  with rationale and settlement history (section 2), and the target
+  architecture (section 4): review loop, engine/gate split, state file
+  and exit-code protocol, escalation policy.
+Acceptance: a reader with this document alone understands why the
+system exists, what shape it has, and why each locked decision went the
+way it did.
+
+#### T29. docs/: per-host findings and adapter contracts
+- Extract the section 3 verified findings and sharp edges for all four
+  hosts: envelope dialects, permission and approval models, skill
+  discovery, the claude billing constraint (3.7), and the per-adapter
+  argv contracts and hard-error taxonomies recorded in the T8-T11 DONE
+  entries.
+- Include the tool-allowlist rationale (why deny lists are
+  documentation, why D5 rests on the integrity check) and the pinned
+  host versions each finding was verified against.
+Acceptance: a reader with this document alone can maintain or re-derive
+any of the four adapters without spelunking branch history.
+
+#### T30. docs/: re-verification procedure + completeness audit
+- Extract the re-verification procedure (section 8's commands and
+  section 3.1's re-probe guidance) with the host versions they were
+  last run against.
+- Then the closing audit: sweep the remaining TODO.md end to end for
+  any architectural or implementation documentation not yet carried by
+  docs/ or README, and move what the sweep finds. This audit is the
+  gate T31 depends on - nothing durable may exist only in TODO.md after
+  it.
+Acceptance: docs/ + README alone (no TODO.md, no branch history) carry
+the architecture, the per-host constraints, how to re-verify them, and
+everything else the audit surfaced; the audit's result (including
+"nothing further found") is recorded in the task's commit message.
+
+#### T31. Remove TODO.md
+Goal: the branch merges without its scaffolding.
+- Final task of the branch, after the T30 audit is accepted: delete
+  TODO.md and fix every reference that treats the ROOT planning
+  document as jeltz's design source (the Makefile T1 comment, any
+  docs/ or README mentions) so nothing points at a dead file.
+- Explicitly out of scope: the shipped skills' references to TODO
+  files (tdd-phase-loop, project-bootstrap, skeptical-reviewer). Those
+  refer to a CONSUMER project's own task list - same filename,
+  different file - and are intentional consumer-facing contract, not
+  references to this document.
+- The git commits remain the canonical fine-grained record until the
+  squash; docs/ (T28-T30) carries everything meant to outlive it.
+Acceptance: no tracked file references the root TODO.md as a design
+source; the consumer-facing TODO references in skills/ are byte-for-byte
+unchanged; `make verify` green.
 
 ---
 
