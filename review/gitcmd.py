@@ -59,10 +59,14 @@ def git_bytes(repo: Path, *args: str) -> bytes:
 
 
 def untracked_files(repo: Path) -> tuple[str, ...]:
-    """List untracked files, excluding gitignored ones, sorted.
+    """List untracked files, excluding gitignored ones and `.jeltz/`, sorted.
 
     Gitignored files are excluded on purpose: they are not reviewed content,
     so they belong in neither the packet nor the worktree materialization.
+    The review engine's own state under `.jeltz/` is excluded the same way
+    even when the consumer has not gitignored it - otherwise writing
+    `.jeltz/review/state.json` would change the very diff hash it records,
+    and no review could ever match the tree it examined (T12).
 
     Args:
         repo: Repository whose working tree to list.
@@ -71,4 +75,6 @@ def untracked_files(repo: Path) -> tuple[str, ...]:
         Sorted relative paths of untracked, un-ignored files.
     """
     listing = git(repo, "ls-files", "--others", "--exclude-standard")
-    return tuple(sorted(listing.splitlines()))
+    return tuple(
+        sorted(path for path in listing.splitlines() if not path.startswith(".jeltz/"))
+    )

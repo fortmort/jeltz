@@ -15,7 +15,7 @@ a rulebook governing `jeltz` itself.
 Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer. Only three can enforce the gate.
 
-Status: T1-T11 complete; next task is T12.
+Status: T1-T12 complete; next task is T13.
 
 ---
 
@@ -1184,12 +1184,67 @@ sent id like the real CLI (live probe evidence: p1/p2 envelopes echo
 `--session-id`/`--resume` exactly), and the fresh-session and repair
 tests now assert the loop's thread ids ARE the generated ids.
 
-#### T12. Orchestrator: one round
-- `review/run.sh --new | --resume`: packet, worktree, dispatch, parse, state
-  write. Exit codes 0 / 10 / 20.
-- Human-readable review to stdout, machine state to `.jeltz/review/state.json`.
-Acceptance: exit code and state file agree with the verdict in every fixture
-case.
+#### T12. Orchestrator: one round - DONE
+Goal was: `review/run.sh --new | --resume`: packet, worktree, dispatch,
+parse, state write; exit codes 0 / 10 / 20; human-readable review to stdout,
+machine state to `.jeltz/review/state.json`. Acceptance: exit code and state
+file agree with the verdict in every fixture case.
+
+Delivered: `review/run.py` (107 statements, 100% coverage) behind
+`review/run.sh`, a thin POSIX wrapper that resolves the checkout and execs
+the module (`python3 -c`, so there is no uncoverable `__main__` block);
+17 tests (22 instances) in `tests/test_run.py`, driven in-process plus one
+end-to-end run of `run.sh` itself, all through a scripted fake codex binary
+on PATH - no test contacts a real backend. Makefile `SH_SOURCES` now
+wildcards `review/*.sh` so the wrapper sits under shellcheck/shfmt.
+
+Behavior:
+- CLI: exactly one of `--new` / `--resume`; `--backend agy|claude|codex|grok`
+  (default codex per D4, `--new` only - a resumed review stays on its
+  recorded backend, so `--resume --backend` is a usage error); `--repo`,
+  `--wip-message`, `--todo-ref` (Q1: optional), `--verify-output FILE`,
+  `--size-ceiling`, and `--allow-api-billing` for the claude preflight (3.7).
+- Exit protocol: 0 for ACCEPTED / ACCEPTED_WITH_NON_BLOCKERS, 10 for
+  REQUIRES_CHANGES, 20 escalate to a human - currently raised only by
+  `PacketTooLargeError` (termination condition 4; conditions 1-3 are T13's),
+  1 for every operational failure (dead backend, unrepairable verdict,
+  tampered checkout, unusable state, unreadable verify file), 2 for usage
+  errors (argparse). The reviewer's raw output goes to stdout; diagnostics
+  go to stderr via logging.
+- State (`.jeltz/review/state.json`, written via tmp-file + rename so a
+  gate hook never reads a torn file): schema_version, backend, task_ref,
+  thread_id, round, diff_hash, the full verdict object, and a history of
+  per-round records `{round, verdict, blockers: [{id, disposition}],
+  costs}` - the raw material for T13's thrash/dispute conditions and T14's
+  hash comparison. `--resume` appends to history on round+1; `--new`
+  resets to round 1 on a fresh thread.
+- Startup calls `reap_stale_worktrees` before anything else (the T6 note),
+  so a dead prior review is reclaimed even when the run then fails early.
+
+Decisions recorded:
+- **`.jeltz/` is never reviewable content.** `untracked_files` (gitcmd) now
+  excludes it, which keeps review state out of the diff hash, the packet,
+  and the worktree materialization alike. Found red: writing `state.json`
+  changed the very hash it records, so no review could ever match the tree
+  it examined and the T14 gate would force re-reviews forever.
+- **The diff hash is computed before dispatch, not after.** If the
+  developer edits the tree mid-review, the recorded hash mismatches the
+  tree and the gate forces a re-review; hashing afterward would record the
+  edited tree as reviewed when the reviewer saw the older one.
+- **A failed round never writes state.** Transport, verdict, and integrity
+  failures exit 1 with the previous valid record intact - an accepting
+  verdict over a tampered checkout is discarded (R7), not persisted.
+
+Hardened after review (one blocker, reproduced red):
+- **The verdict's declared round is verified, not trusted.** The declared
+  round decides whether dispositions may deactivate blockers, so a fresh
+  review declaring round 2 with "resolved" blockers laundered unresolved
+  findings into an exit-0 acceptance and wrote state whose top-level round
+  contradicted the verdict's. `parse_with_repair` now takes the
+  orchestrator's `expected_round` (threaded through `review()` and
+  `conduct_review`); a mismatch is a repairable `WrongRoundError` - one
+  same-thread repair, then failure with no state write. Tested for --new
+  and --resume, including the repaired-on-thread success path.
 
 #### T13. Escalation policy engine
 - All four termination conditions from 4.2.

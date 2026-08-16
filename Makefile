@@ -5,7 +5,7 @@
 # on purpose -- it would flip hooks/lib/repo-mode.sh to strict mode (see
 # TODO.md T1).
 
-SH_SOURCES := install.sh $(wildcard hooks/*.sh hooks/lib/*.sh)
+SH_SOURCES := install.sh $(wildcard hooks/*.sh hooks/lib/*.sh review/*.sh)
 
 VENV := .venv
 PYTEST := $(VENV)/bin/pytest

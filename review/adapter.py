@@ -209,6 +209,7 @@ class ReviewerAdapter(ABC):
         worktree: Path,
         mode: str = "new",
         thread_id: str | None = None,
+        expected_round: int | None = None,
     ) -> ReviewResult:
         """Run one review round against the packet.
 
@@ -218,6 +219,11 @@ class ReviewerAdapter(ABC):
             mode: "new" opens a fresh reviewer thread; "resume" continues
                 an existing one for a re-review (D1).
             thread_id: Required for "resume", forbidden for "new".
+            expected_round: When given, the round the verdict must
+                declare - the declared round decides whether dispositions
+                may deactivate blockers, so it is verified against the
+                orchestrator's count, not trusted (T12). A mismatch gets
+                the single same-thread repair like any verdict defect.
 
         Returns:
             The validated verdict, the thread id for later resumes, and
@@ -258,7 +264,7 @@ class ReviewerAdapter(ABC):
             repaired.append(text)
             return text
 
-        verdict = parse_with_repair(raw, rerun)
+        verdict = parse_with_repair(raw, rerun, expected_round=expected_round)
         return ReviewResult(
             verdict=verdict,
             thread_id=tid,
@@ -276,6 +282,7 @@ def conduct_review(
     mode: str = "new",
     thread_id: str | None = None,
     size_ceiling: int = DEFAULT_SIZE_CEILING,
+    expected_round: int | None = None,
 ) -> ReviewResult:
     """Run one full review round: packet, worktree, adapter, integrity.
 
@@ -288,6 +295,8 @@ def conduct_review(
         mode: "new" or "resume" (D1).
         thread_id: Reviewer thread to resume, when mode is "resume".
         size_ceiling: Maximum rendered packet size in characters.
+        expected_round: When given, the round the verdict must declare
+            (verified, not trusted - T12).
 
     Returns:
         The round's result; only reachable when the integrity check passed.
@@ -309,6 +318,12 @@ def conduct_review(
     )
     with review_worktree(repo, wip_message) as worktree:
         before = snapshot(worktree)
-        result = adapter.review(packet, worktree, mode=mode, thread_id=thread_id)
+        result = adapter.review(
+            packet,
+            worktree,
+            mode=mode,
+            thread_id=thread_id,
+            expected_round=expected_round,
+        )
         verify_integrity(worktree, before)
     return result

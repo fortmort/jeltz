@@ -54,6 +54,15 @@ class SemanticViolationError(VerdictError):
     """The verdict block is schema-valid but internally contradictory."""
 
 
+class WrongRoundError(VerdictError):
+    """The verdict declares a different round than the one being run.
+
+    The declared round is load-bearing: dispositions may deactivate
+    blockers only in round 2+, so a round-1 reviewer declaring a later
+    round could launder unresolved blockers into an acceptance (T12).
+    """
+
+
 def load_schema() -> dict[str, Any]:
     """Load the shipped verdict JSON Schema.
 
@@ -220,13 +229,19 @@ def parse_verdict(text: str) -> dict[str, Any]:
     return candidates[0]
 
 
-def parse_with_repair(text: str, rerun: Callable[[str], str]) -> dict[str, Any]:
+def parse_with_repair(
+    text: str,
+    rerun: Callable[[str], str],
+    expected_round: int | None = None,
+) -> dict[str, Any]:
     """Parse reviewer output, allowing exactly one repair round.
 
     Args:
         text: The reviewer's complete output.
         rerun: Callback that sends a repair instruction back to the same
             reviewer thread and returns its new output.
+        expected_round: When given, the round the verdict must declare;
+            a mismatch is repairable like any other verdict defect.
 
     Returns:
         The validated verdict object.
@@ -234,9 +249,21 @@ def parse_with_repair(text: str, rerun: Callable[[str], str]) -> dict[str, Any]:
     Raises:
         VerdictError: If the output is empty (never repaired), or if the
             repaired output still fails to parse or validate.
+        WrongRoundError: If the (possibly repaired) verdict declares a
+            round other than expected_round.
     """
+
+    def checked(candidate: str) -> dict[str, Any]:
+        data = parse_verdict(candidate)
+        if expected_round is not None and data["round"] != expected_round:
+            raise WrongRoundError(
+                f"verdict declares round {data['round']}, "
+                f"but this is review round {expected_round}"
+            )
+        return data
+
     try:
-        return parse_verdict(text)
+        return checked(text)
     except VerdictError as exc:
         if not exc.repairable:
             raise
@@ -246,4 +273,4 @@ def parse_with_repair(text: str, rerun: Callable[[str], str]) -> dict[str, Any]:
             "block matching the documented schema: schema_version, verdict, "
             "round, blockers, non_blockers - both arrays always present."
         )
-        return parse_verdict(rerun(instruction))
+        return checked(rerun(instruction))
