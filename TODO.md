@@ -47,6 +47,7 @@ assistant they happen to use.
 | D3 | The Stop hook gate is in scope and is the primary deliverable for Problem B. | Locked |
 | D4 | The reviewer backend is pluggable. Codex is the default; no backend's billing model is assumed permanent. | Locked |
 | D5 | The reviewer **must not author code**. Cache and artifact writes (pytest, ruff, mypy, coverage) are expected and permitted; modifications to tracked source are not. | Locked, restated |
+| D6 | **Every reviewer adapter is a subprocess transport.** All four hosts expose the same shape - spawn a CLI, pass a prompt, parse structured output, resume by id - so adapters stay uniform ~50-statement `_send` primitives behind the T7 template method, and timeout/kill semantics come free from the process boundary. MCP or vendor-SDK integrations are out unless a needed capability is unreachable from the CLI (none is today; the T8 A/B in 2.1 is the supporting evidence, and 3.6 forces shell-out anyway because hooks cannot reach host MCP tools). | Locked (2026-08-16, generalizes the T8 D2 settlement to T9-T11) |
 
 ### 2.1 D2 should probably be reversed
 
