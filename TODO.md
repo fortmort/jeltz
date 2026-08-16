@@ -15,7 +15,7 @@ a rulebook governing `jeltz` itself.
 Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer. Only three can enforce the gate.
 
-Status: T1-T7 complete; next task is T8.
+Status: T1-T8 complete; next task is T9.
 
 ---
 
@@ -43,7 +43,7 @@ assistant they happen to use.
 | # | Decision | Status |
 |---|---|---|
 | D1 | Re-review happens in the **existing reviewer thread**, told to check amended work against its own previous blockers. | Locked |
-| D2 | Load the skill via `base-instructions` on the codex MCP tool. | **Revisit - see 2.1** |
+| D2 | ~~Load the skill via `base-instructions` on the codex MCP tool.~~ **Reversed by the T8 A/B (2026-08-16): the codex adapter invokes the installed skill via `codex exec`; the MCP path is not shipped.** See 2.1. |
 | D3 | The Stop hook gate is in scope and is the primary deliverable for Problem B. | Locked |
 | D4 | The reviewer backend is pluggable. Codex is the default; no backend's billing model is assumed permanent. | Locked |
 | D5 | The reviewer **must not author code**. Cache and artifact writes (pytest, ruff, mypy, coverage) are expected and permitted; modifications to tracked source are not. | Locked, restated |
@@ -74,6 +74,23 @@ This matters beyond fidelity, because D2 constrains the engine (section 3.2):
 Dropping D2 removes the JSON-RPC client entirely and gains native schema
 enforcement. Recommendation: default to the installed skill, keep
 `base-instructions` behind a config switch, and A/B them in T8.
+
+**Settled by the T8 A/B (2026-08-16, live, codex-cli 0.147.0).** Both paths
+reviewed the same seeded fixture (a `greet.py` violating CLAUDE.md norms):
+
+| Axis | exec + installed skill | MCP + `base-instructions` |
+|---|---|---|
+| Verdict parse reliability | `--output-schema` enforces the shape structurally | self-formatted fence; worked once, unenforced (the R2 risk) |
+| Token cost | 71,011 in / 2,216 out (48,384 cached) | 46,712 in / 1,707 out (24,832 cached) |
+| Review quality | 4 blockers, per-norm granularity | 3 blockers, norms merged into one finding |
+| Client complexity | subprocess + JSONL | stdio JSON-RPC client; 618 `codex/event` notifications in one review |
+
+The MCP path is ~35% cheaper on input tokens because `base-instructions`
+replaces codex's ~14.5k-token default system prompt, but structural verdict
+enforcement and a trivially simpler client win for automation. D2 is
+reversed; the MCP client is not shipped (revisit only if token cost becomes
+the binding constraint). Grok's `--system-prompt-override` can still supply
+a second injection data point in T10 if wanted.
 
 ---
 
@@ -797,18 +814,94 @@ Hardened after review (one blocker, reproduced by the reviewer):
   of the requested one so the echo behavior of a well-behaved backend can
   no longer mask the check.
 
-#### T8. Codex adapter (plus the D2 A/B)
-- Default path: `codex exec` against the installed skill with the prompt form
-  used today (`$skeptical-reviewer <ref> vs. <todo ref>`), `--output-schema`,
-  `-o`, `--json`; `codex exec resume <id>` for re-review (D1).
-- Alternate path behind a config switch: MCP over stdio with
-  `base-instructions` and `codex-reply`.
-- Compare on review quality, token cost, and verdict parse reliability. Record
-  the result and settle D2 in this document. Grok's
-  `--system-prompt-override` offers a cheap second data point for the same
-  question.
-Acceptance: fresh review and threaded re-review both work against a fixture
-repo; a killed backend surfaces as a typed error, not a hang.
+#### T8. Codex adapter (plus the D2 A/B) - DONE
+Goal: the default reviewer backend, and the A/B that settles D2.
+
+Delivered: `review/codex.py` (`CodexAdapter`, 56 statements, 100% coverage);
+18 tests in `tests/test_codex_adapter.py`, driven by a scripted fake codex
+binary that speaks the live-probed JSONL dialect - no test contacts a real
+backend. The D2 A/B ran live and settled D2 (section 2.1): the exec path
+ships, the MCP `base-instructions` path does not, so there is no config
+switch and no JSON-RPC client.
+
+**REQUIREMENT CHANGE - accepted by accepting this task.** The original T8
+text required the MCP alternate path to ship behind a config switch. That
+requirement was written before the A/B (which T8 also required) existed;
+the A/B rejected the MCP arm on verdict-enforcement and client-complexity
+grounds, so shipping it would mean maintaining a dead stdio JSON-RPC
+client under the 100% coverage gate purely as a record of the losing arm.
+The alternate-path deliverable is therefore dropped, not implemented.
+Human acceptance of T8 is acceptance of this change; reject it to have
+the MCP path built as specified. Nothing is lost meanwhile: the losing
+arm's numbers are recorded in 2.1, the MCP tool surface stays verified in
+3.1 with re-probe commands in section 8, and 2.1 names the re-entry
+condition (token cost becoming the binding constraint).
+
+Behavior:
+- Fresh review: `codex exec --json --sandbox read-only --output-schema
+  <strict schema> "$skeptical-reviewer HEAD\n\n<packet>"` - the known-good
+  installed-skill invocation framing the T6 packet, run with the disposable
+  worktree as cwd. The strict schema is `strict_schema()` written to a temp
+  file per send.
+- Re-review (D1): `codex exec resume <thread> --json -c
+  sandbox_mode="read-only" --output-schema ... <packet>` - the resume
+  subcommand has no `--sandbox` flag (probed live on 0.147.0), so the config
+  override is the supported spelling. Resume and repair sends are not
+  re-framed with the skill invocation; the thread already has it.
+- Stream parsing: thread id from `thread.started`, output from the LAST
+  `agent_message` item (interim narration messages are ignored); non-JSON
+  and non-object lines are skipped. A stream with no agent message degrades
+  to empty raw output and no `thread.started` to an empty thread id - the
+  transport reports what it saw, and the T7 template method's typed R1/D1
+  checks own the failure.
+- Bare schema-constrained verdict JSON is fenced before return so T4's
+  fence-extracting parser accepts it; output that is prose, already fenced,
+  or JSON that is not verdict-shaped passes through untouched.
+- Transport failures are all `AdapterProcessError`: missing binary, nonzero
+  exit (carrying stderr), and a hung backend killed at the timeout
+  (constructor arg, default 600s) - never a hang, never a verdict.
+- **The backend never sees the caller's stdin** (`stdin=DEVNULL`). Found by
+  the first live acceptance run, which timed out at 600s: codex documents
+  that piped stdin is appended to the prompt as a `<stdin>` block, so it
+  blocks until EOF - and the engine will be invoked from hooks and wrapper
+  scripts whose stdin is exactly an open-but-silent pipe. Reproduced
+  deterministically in a test (a held-open pipe on fd 0 stalled the review
+  pre-fix, passes post-fix); the identical live round completed in 59s once
+  stdin was detached.
+
+Decisions recorded:
+- **`-o/--output-last-message` is not used**: the `--json` stream already
+  carries the final message; a second channel would be a second parser.
+- **The worktree is the subprocess cwd** rather than `--cd`, identically on
+  both paths (resume lacks `--cd` anyway); resume-by-UUID is not affected
+  by codex's session cwd filtering (probed live: resume from a different
+  cwd than the session opened in works and preserves the thread).
+- **Degrade, don't duplicate**: the adapter never raises for empty output
+  or a missing thread id itself - those are the template method's R1 and
+  D1 assertions, and duplicating them in a subclass would drift.
+
+Acceptance evidence (live, codex-cli 0.147.0, 2026-08-16): `conduct_review`
+ran end to end against a seeded fixture repo through the real CLI - round
+one (mode new) returned a schema-valid REQUIRES_CHANGES with two blockers
+and a thread id; round two (mode resume) came back on the SAME thread with
+a round-2 verdict re-asserting both blocker ids with dispositions, passing
+the D1 continuity check. Resume was issued from a different worktree cwd
+than round one, confirming resume-by-UUID ignores session cwd filtering.
+The killed-backend criterion is covered by the scripted-fake timeout test
+(typed error in under 15s against a 30s hang) and was also exercised live
+by the stdin stall the first acceptance run caught.
+
+Hardened after review (two blockers):
+- **Every spawn failure is typed, not just a missing binary.** `_run` had
+  caught only `FileNotFoundError`, so a configured binary that exists but
+  lacks the exec bit escaped as raw `PermissionError` (reproduced by the
+  reviewer and by a regression test). The handler now catches `OSError` -
+  the superclass of every process-start failure - and maps it to
+  `AdapterProcessError` naming the binary, upholding T7's typed
+  transport-error contract.
+- **The dropped MCP deliverable is an explicit requirement change**, not a
+  silent rewrite: recorded above with its rationale and rejection path, and
+  bound to the human acceptance of this task.
 
 #### T9. Antigravity adapter
 - `agy -p --output-format json --json-schema <schema> --model gemini-3.1-pro-*`,
