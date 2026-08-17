@@ -1,54 +1,20 @@
 """Claude Code Stop hook shim (T16).
 
-Reads the Stop-hook payload from stdin, asks the T15 bridge for a ruling,
-and translates a denial into Claude Code's documented Stop decision
-schema: a top-level `{"decision": "block", "reason": ...}` on stdout
-(`hookSpecificOutput` decisions belong to other events such as
-PreToolUse). An allow is silent - no output, exit 0.
+Claude Code originated the Stop-hook protocol this repo gates on, and
+the full gate behavior lives in the shared `review.stop_hook.gate_stop`
+(top-level `{"decision": "block", "reason": ...}` on stdout, silent
+allow, `stop_hook_active` pass-through, fail-open on unusable input).
+Claude-Code-specific host facts:
 
-Host-specific duties live here, keeping the bridge neutral:
-- `stop_hook_active` true means Claude Code is already continuing because
-  of a Stop hook; the shim allows immediately without consulting the
-  bridge, so it can never contribute to a stop-hook loop and never
-  records a denial for a stop it did not gate.
-- Unusable input (unparseable, not an object, no usable `cwd`) fails
-  open with a logged error - a crashing or blocking hook on bad input
-  would trap the session (CI is the backstop, R4).
+- Of the two documented blocking mechanisms (structured JSON with
+  exit 0 vs exit 2 with the reason on stderr), the gate uses the
+  structured-JSON path; every exit is 0, which Claude Code treats as
+  success.
+- The Stop hook's default timeout is 600s - far more than the gate
+  needs, since it only reads the pre-computed state file.
+- Hook wiring and installation are T21's deliverable.
 """
 
-import json
-import logging
-import sys
-from pathlib import Path
+from review.stop_hook import gate_stop as main
 
-from review.bridge import attempt_stop
-
-logger = logging.getLogger(__name__)
-
-
-def main() -> int:
-    """Gate a Claude Code stop attempt from a Stop-hook stdin payload.
-
-    Returns:
-        The hook's exit code: always 0, with the deny decision (if any)
-        emitted as JSON on stdout.
-    """
-    try:
-        payload = json.loads(sys.stdin.read())
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        logger.error("unusable stop-hook input (%s); failing open", exc)
-        return 0
-    if not isinstance(payload, dict):
-        logger.error("stop-hook input is not an object; failing open")
-        return 0
-    if payload.get("stop_hook_active"):
-        return 0
-    cwd = payload.get("cwd")
-    if not isinstance(cwd, str) or not cwd:
-        logger.error("no usable cwd in stop-hook input; failing open")
-        return 0
-    decision = attempt_stop(Path(cwd))
-    if not decision.allow:
-        output = {"decision": "block", "reason": decision.reason}
-        sys.stdout.write(json.dumps(output) + "\n")
-    return 0
+__all__ = ["main"]

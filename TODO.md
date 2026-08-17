@@ -15,7 +15,7 @@ a rulebook governing `jeltz` itself.
 Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer. Only three can enforce the gate.
 
-Status: T1-T16 complete; next task is T17.
+Status: T1-T17 complete; next task is T18.
 
 ---
 
@@ -253,7 +253,7 @@ and a weak default primary, on interface grounds alone.
 | Host | Mechanism |
 |---|---|
 | Claude Code | `Stop` hook returns a top-level `{"decision": "block", "reason": "..."}` or exits 2 with the reason on stderr; `hookSpecificOutput` decisions belong to other events (PreToolUse, PermissionRequest). Receives `stop_hook_active`. Default timeout 600s. (Re-verified against the hooks reference during T16 review; the row previously recorded a nested deny schema that Claude Code ignores for Stop.) |
-| Codex | Hooks system (`config.toml` or `hooks.json`) with `Stop`, `PreToolUse`, `SessionStart`, plus a trust model (`/hooks`, `--dangerously-bypass-hook-trust`). |
+| Codex | Speaks the Claude-Code-style Stop protocol verbatim: `Stop` hook blocks with a top-level `{"decision": "block", "reason": "..."}` on exit 0 (or exit 2 with the reason on stderr); other nonzero exits fail open. Input adds `turn_id`, `model`, `permission_mode`, `last_assistant_message`, nullable `transcript_path`; receives `stop_hook_active`. Config: `~/.codex/hooks.json` or `[[hooks.Stop]]` tables in `config.toml`. Trust model: non-managed hooks need one-time trust via `/hooks`; `--dangerously-bypass-hook-trust` skips it (never recommend). Caveat: hooks in repo-local `.codex/config.toml` reportedly do not fire in interactive sessions (openai/codex#17532) - install at user scope. (Verified against the codex hooks reference during T17; codex-cli 0.147.0.) |
 | Antigravity | `.agents/hooks.json` `Stop` handler returns `{"decision": "continue", "reason": "..."}`. Also `PostInvocation` with `terminationBehavior: "force_continue"`, and `PreToolUse` with `deny`. Default timeout 30s. |
 | Grok | **None.** PreToolUse / PostToolUse / session start / end only. See 3.5. |
 
@@ -1466,9 +1466,49 @@ Hardened after review (one blocker, reproduced red):
   the re-verification. The schema test now pins the exact key set so a
   wrapper regression cannot sneak back in.
 
-#### T17. Codex Stop hook shim
-- Same decision and instruction, codex hooks schema; document installation
-  under the trust model without `--dangerously-bypass-hook-trust`.
+#### T17. Codex Stop hook shim - DONE
+Goal was: same decision and instruction, codex hooks schema; document
+installation under the trust model without
+`--dangerously-bypass-hook-trust`.
+Delivered: `review/codex_stop.py` exposing `main()`, the second host shim
+over the T15 bridge; behavior pinned by 8 tests (9 instances) in
+`tests/test_codex_stop.py`, including the end-to-end acceptance fixture
+through the shim. Protocol research first: section 3.6's codex row
+recorded only that a hooks system exists, and T16's blocker came from
+exactly that kind of thin row, so the schema was verified against the
+codex hooks reference before RED - codex speaks the Claude-Code-style
+Stop protocol verbatim (same `cwd`/`stop_hook_active` payload core, same
+top-level `{"decision": "block", "reason": ...}` block on exit 0). The
+3.6 row now records the full verified protocol.
+Behavior: identical to T16's gate - documented block schema carrying the
+bridge's reason plus recovery instruction, silent allow,
+`stop_hook_active` immediate pass-through, one denial per tree, fail-open
+on unusable input, every exit 0. The codex tests pin this contract
+independently of the Claude tests (every payload also carries the
+codex-specific fields - `turn_id`, `model`, `permission_mode`,
+`last_assistant_message`, null `transcript_path` - so tolerance of them
+is pinned too), letting the hosts diverge later without silent breakage.
+Installation under the trust model (documented in the module docstring;
+README surfacing is T21): configure at user scope (`~/.codex/hooks.json`
+or `[[hooks.Stop]]` in `~/.codex/config.toml`) and trust the hook once
+interactively via `/hooks`; never pass `--dangerously-bypass-hook-trust`
+- bypassing trust is exactly the habit the gate should not teach. User
+scope also sidesteps the repo-local interactive-hooks caveat
+(openai/codex#17532).
+Refactoring: since the two hosts share one protocol, the gate body moved
+from `review/claude_stop.py` to a host-neutral shared module
+`review/stop_hook.py` (`gate_stop()`, the former `claude_stop.main`
+verbatim); both host shims are now thin facades (`main = gate_stop`)
+whose docstrings carry only host-specific facts (trust model and payload
+extras for codex; the exit-0-vs-exit-2 choice and 600s timeout for
+Claude Code). This replaces GREEN's cross-host layering (codex importing
+from the claude module) and gives T18 a place to reuse the stdin
+parse/fail-open scaffolding even though antigravity's emission schema
+differs.
+Acceptance shown end-to-end through the shim: a codex session edits
+tracked source and tries to stop; the shim denies once with the
+instruction, the session runs the literal command against a scripted
+backend, reaches acceptance, and the next stop is silent.
 
 #### T18. Antigravity Stop hook shim
 - Same decision and instruction, `{"decision": "continue", "reason": ...}` in
