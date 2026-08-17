@@ -214,8 +214,12 @@ def _load_state(repo: Path) -> dict[str, Any] | None:
     return data
 
 
-def _write_state(repo: Path, state: dict[str, Any]) -> None:
-    """Write review state atomically so readers never see a torn file."""
+def write_state(repo: Path, state: dict[str, Any]) -> None:
+    """Write review state atomically so readers never see a torn file.
+
+    Shared with the stop-gate bridge (T15), which merges its denial
+    marker into the same file.
+    """
     path = repo / STATE_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
@@ -348,7 +352,7 @@ def main(argv: list[str] | None = None) -> int:
         # review into an acceptance. Recorded in the same atomic write
         # as the round itself.
         state["escalated"] = list(escalation.conditions)
-    _write_state(repo, state)
+    write_state(repo, state)
     if escalation is not None:
         _escalate(repo, escalation, state["history"])
         return EXIT_ESCALATE

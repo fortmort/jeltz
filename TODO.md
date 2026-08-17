@@ -15,7 +15,7 @@ a rulebook governing `jeltz` itself.
 Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer. Only three can enforce the gate.
 
-Status: T1-T14 complete; next task is T15.
+Status: T1-T15 complete; next task is T16.
 
 ---
 
@@ -1367,30 +1367,52 @@ Hardened after review (one blocker, reproduced red):
   non-ASCII source file after a review (blocks as stale, no crash), and
   the packet carrying the real on-disk path.
 
-#### T15. Stop-gate recovery bridge
-Goal: make a denied stop actually produce a review. Without this, T14 blocks a
-noncompliant session and leaves it nowhere to go - and that session is the
-entire Problem B audience.
-- The gate's `reason` string is the only channel back into the coding session,
-  so it must carry a deterministic instruction, not a complaint: the literal
-  command to run (`review/run.sh --new`), what to do on exit 10 (invoke
-  `reviewer-response`, then `review/run.sh --resume`), and what to do on exit
-  20 (stop and surface the dossier to a human).
-- Host-neutral prose plus a literal command. Do not assume `tdd-phase-loop` is
-  installed - that is T20's path, and the developers this exists for are
-  precisely the ones not running it.
-- Recursion and repeat-denial guard: record in `.jeltz/review/state.json` that
-  a denial was issued for a given diff hash, and never deny twice for the same
-  hash. On Claude Code also respect `stop_hook_active`. A session that ignores
-  the instruction must be able to stop on the second attempt with a logged
-  warning rather than being trapped.
-- Decide the posture when the instruction is ignored outright. A hook cannot
-  escalate further; the gate has raised the floor and recorded the skip, and CI
-  (R4) is the backstop.
-Acceptance: an end-to-end fixture in which a session with no knowledge of
-`tdd-phase-loop` edits tracked source, attempts to stop, is denied once,
-follows the instruction, and reaches acceptance or escalation - with no
-deadlock, no second denial for the same hash, and no unbounded loop.
+#### T15. Stop-gate recovery bridge - DONE
+Goal was: make a denied stop actually produce a review. Without this, T14
+blocks a noncompliant session and leaves it nowhere to go - and that session
+is the entire Problem B audience.
+Delivered: `review/bridge.py` (35 statements) exposing `attempt_stop(repo)`,
+the single call every host shim (T16-T19) makes; behavior pinned by 10
+tests in `tests/test_bridge.py`, including the end-to-end acceptance
+fixture.
+Behavior:
+- Allows from the T14 gate pass through verbatim; nothing is written.
+- A denial's reason ends with the literal recovery instruction: run
+  `review/run.sh --new`; on exit 10 apply `reviewer-response`, then
+  `review/run.sh --resume --response-file <response>`; repeat until exit 0
+  or exit 20; on exit 20 stop and hand `.jeltz/review/escalation.md` to a
+  human. Host-neutral prose - no `tdd-phase-loop` assumed.
+- Repeat-denial guard: each denial merges `denied_hash` into
+  `.jeltz/review/state.json` (atomic, via the orchestrator's shared
+  `write_state`), and the bridge never denies twice for the same hash - the
+  second attempt is allowed with a logged warning. New edits change the
+  hash and re-arm the guard.
+Decisions recorded:
+- The denial marker merges into whatever the state file holds, preserving a
+  real review record; a denial-only record satisfies neither the gate's nor
+  the orchestrator's loader, so it cannot masquerade as a review. A
+  completed round rewrites state wholesale, clearing the marker - each
+  review cycle gets exactly one denial.
+- Posture when the instruction is ignored: the gate has raised the floor
+  and recorded the skip; the session stops with a logged warning and CI
+  (R4) is the backstop. A hook cannot escalate further.
+- `stop_hook_active` is Claude Code's host-specific field and is the T16
+  shim's job; the bridge stays host-neutral.
+Acceptance shown end-to-end: a session with no knowledge of
+`tdd-phase-loop` edits tracked source, is denied once with the instruction,
+runs the literal command against a scripted backend, reaches acceptance,
+and stops cleanly - no deadlock, no second denial for the same hash, no
+unbounded loop.
+
+Hardened after review (one blocker, reproduced red):
+- **An unrecordable denial fails open, never crashes.** With `.jeltz`
+  present as a regular file, recording the marker raised
+  NotADirectoryError out of the hook - no instruction returned, no marker
+  written, so every retry would deny again and the outcome depended on
+  each host's crash handling. `attempt_stop` now catches OSError from the
+  state write, logs the failure, and allows the stop with a
+  failing-open reason (CI is the backstop, R4). Regression test pins the
+  posture.
 
 #### T16. Claude Code Stop hook shim
 - Translate T14's decision to `decision: "deny"` / exit 2, carrying T15's
