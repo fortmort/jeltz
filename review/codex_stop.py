@@ -18,6 +18,11 @@ gate behavior therefore lives in the shared
   the shim tolerates and ignores them all.
 """
 
-from review.stop_hook import gate_stop as main
+from review.stop_hook import CLAUDE_STYLE, gate_stop
 
 __all__ = ["main"]
+
+
+def main() -> int:
+    """Run the shared gate under the Claude-Code-style Stop protocol."""
+    return gate_stop(CLAUDE_STYLE)

@@ -15,7 +15,7 @@ a rulebook governing `jeltz` itself.
 Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer. Only three can enforce the gate.
 
-Status: T1-T17 complete; next task is T18.
+Status: T1-T18 complete; next task is T19.
 
 ---
 
@@ -254,7 +254,7 @@ and a weak default primary, on interface grounds alone.
 |---|---|
 | Claude Code | `Stop` hook returns a top-level `{"decision": "block", "reason": "..."}` or exits 2 with the reason on stderr; `hookSpecificOutput` decisions belong to other events (PreToolUse, PermissionRequest). Receives `stop_hook_active`. Default timeout 600s. (Re-verified against the hooks reference during T16 review; the row previously recorded a nested deny schema that Claude Code ignores for Stop.) |
 | Codex | Speaks the Claude-Code-style Stop protocol verbatim: `Stop` hook blocks with a top-level `{"decision": "block", "reason": "..."}` on exit 0 (or exit 2 with the reason on stderr); other nonzero exits fail open. Input adds `turn_id`, `model`, `permission_mode`, `last_assistant_message`, nullable `transcript_path`; receives `stop_hook_active`. Config: `~/.codex/hooks.json` or `[[hooks.Stop]]` tables in `config.toml`. Trust model: non-managed hooks need one-time trust via `/hooks`; `--dangerously-bypass-hook-trust` skips it (never recommend). Caveat: hooks in repo-local `.codex/config.toml` reportedly do not fire in interactive sessions (openai/codex#17532) - install at user scope. (Verified against the codex hooks reference during T17; codex-cli 0.147.0.) |
-| Antigravity | `.agents/hooks.json` `Stop` handler returns `{"decision": "continue", "reason": "..."}`. Also `PostInvocation` with `terminationBehavior: "force_continue"`, and `PreToolUse` with `deny`. Default timeout 30s. |
+| Antigravity | `Stop` hook blocks with `{"decision": "continue", "reason": "..."}` on stdout (continue = keep working; the reason reaches the model); silence allows. Input is camelCase: `workspacePaths` (list of every mounted workspace root, `--add-dir` mounts more than one; ordering semantics undocumented - there is no `cwd`), `executionNum` (counts Stop-hook firings within one stop cycle: 0 on the first attempt, incrementing on each forced continuation, and resetting to 0 for each independent stop - proven by resuming a conversation whose previous stop had reached 1 and observing the next cycle start at 0; the `stop_hook_active` analog), `terminationReason` (`NO_TOOL_CALL` on a normal print-mode stop), `fullyIdle`, `conversationId`, `transcriptPath`, `artifactDirectoryPath`, `modelName`, `error`. Config: `.agents/hooks.json` at the workspace root or user-global `~/.gemini/config/hooks.json` under `{"<hook-name>": {"Stop": [{"type": "command", "command": ..., "timeout": ...}]}}`. Default timeout 30s. Caveat: in print mode, hooks (like skills, 3.4) fire only with a project context - `--new-project` or an existing project. Also `PostInvocation` with `terminationBehavior: "force_continue"`, and `PreToolUse` with `deny`. (Verified live during T18: dump-hook payload capture, a continue-decision round trip, and a resumed-conversation probe of the `executionNum` reset; agy 1.1.13.) |
 | Grok | **None.** PreToolUse / PostToolUse / session start / end only. See 3.5. |
 
 Antigravity's 30-second default hook timeout is far too short to run a review
@@ -1510,9 +1510,75 @@ tracked source and tries to stop; the shim denies once with the
 instruction, the session runs the literal command against a scripted
 backend, reaches acceptance, and the next stop is silent.
 
-#### T18. Antigravity Stop hook shim
-- Same decision and instruction, `{"decision": "continue", "reason": ...}` in
-  `.agents/hooks.json`; keep well inside the 30s default timeout.
+#### T18. Antigravity Stop hook shim - DONE
+Goal was: same decision and instruction as the other shims,
+`{"decision": "continue", "reason": ...}` in `.agents/hooks.json`, well inside
+the 30s default timeout.
+Delivered: `review/agy_stop.py` exposing `main()`, the third host shim over
+the T15 bridge, and `tests/test_agy_stop.py` (12 tests, 13 instances). Protocol
+research first, per the T17 process guard: section 3.6's antigravity row was
+verified live against agy 1.1.13 before any test was written - a dump-only
+Stop hook captured the real payload (camelCase, `workspacePaths` list, no
+`cwd`, no `stop_hook_active`), and a second probe proved that
+`{"decision": "continue", "reason": ...}` re-enters the loop with the reason
+reaching the model and that `executionNum` increments 0 -> 1 on the forced
+continuation. The 3.6 row now records the verified contract, including the
+print-mode caveat (hooks, like skills, need a project context).
+Behavior: identical gate semantics to T16/T17 - silent allow, one denial per
+tree carrying the bridge reason plus `review/run.sh --new`, immediate allow
+without gating when `executionNum` is nonzero (agy's `stop_hook_active`
+analog), fail-open with a logged error on unusable input or no usable
+workspace path, every exit 0. Every entry of `workspacePaths` is gated in a
+single pass (the gate treats non-repo directories as nothing-to-gate, so
+extra mounts are safe); any denial from a multi-root payload - even a
+single denying root - names each denying root and scopes the recovery with
+`--repo <root>` on every `review/run.sh` command (the flag is top-level in
+run.py, so it covers `--resume` too), and every root's denial is recorded
+at once - necessary because the `executionNum` guard allows the continued
+stop cycle wholesale. The 30s timeout is safe because the shim only reads
+the pre-computed state file.
+Review round 1 (two blockers): (1) the `executionNum` guard rested on a
+single-cycle observation - resolved by proving the reset invariant live with
+a resumed-conversation probe (a stop cycle after one reaching `executionNum`
+1 starts at 0 again), per the reviewer's own condition; (2) gating only
+`workspacePaths[0]` could let a clean first root mask a dirty later one
+(`--add-dir` makes multi-root real) - fixed test-first: the gate now
+iterates every usable entry, skipping non-string/empty ones, failing open
+only when none remain.
+Review round 2 (one blocker): short-circuiting on the first denying root
+interacted fatally with the proven `executionNum` guard - the continued
+stop cycle is allowed wholesale, so a second dirty root that was never
+consulted on the first pass would never be gated at all. Fixed test-first:
+the gate evaluates all roots before emitting, records every denial in one
+pass, and a multi-root denial names each denying root with per-root
+`--repo` recovery guidance; a two-dirty-root lifecycle test covers deny ->
+guarded continuation -> per-root recovery -> silent stop.
+Review round 3 (one blocker): the round-2 fix keyed the scoped guidance on
+multiple *denials*, so a clean-primary/dirty-secondary payload still got
+the unscoped instruction - which, run from the clean primary cwd, reviews
+the wrong repository. Fixed test-first: the scoped per-root guidance now
+keys on the payload being multi-root (after filtering unusable entries);
+only a genuinely single-workspace payload keeps the byte-identical plain
+reason. The clean-first/dirty-second test now asserts the denying root's
+path, the `--repo` guidance, and a successful scoped recovery to a silent
+stop.
+Installation (README surfacing is T21): `.agents/hooks.json` at the workspace
+root (designed to be checked into VCS) or user-global
+`~/.gemini/config/hooks.json`.
+Refactoring: `review/stop_hook.py`'s gate is now parametrized by a frozen
+`StopProtocol` dataclass capturing the only three points on which the hosts
+disagree - the loop-guard key (`stop_hook_active` vs `executionNum`), the
+workspace-roots extraction (the `cwd` string vs the `workspacePaths` list,
+every entry gated), and the deny decision word (`block` vs `continue`). `stop_hook.py` defines the
+`CLAUDE_STYLE` instance shared by the Claude Code and codex facades; agy's
+facade builds its own instance. All three shims are now thin facades whose
+docstrings carry only host-specific facts. (The fail-open log line for a bad
+workspace is now host-neutral: "no usable workspace" rather than "no usable
+cwd".)
+Acceptance shown end-to-end through the shim: an agy session edits tracked
+source and tries to stop; the shim denies once with the instruction, the
+session runs the literal command against a scripted backend, reaches
+acceptance, and the next stop is silent.
 
 #### T19. Grok deny-at-edit gate
 Goal: the only enforcement shape available on grok (3.5).
