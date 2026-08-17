@@ -1,27 +1,34 @@
 """Shared Stop-hook gate, parametrized over the hosts' stop protocols.
 
-All three stop-capable hosts follow the same gate shape - read a JSON
+All four stop-capable hosts follow the same gate shape - read a JSON
 payload from stdin, allow silently, deny by writing a decision object to
 stdout, always exit 0, and fail open on anything unusable - but they
-disagree on three points, captured by `StopProtocol`:
+disagree on four points, captured by `StopProtocol`:
 
 - which payload field marks a stop the hook already continued (Claude
-  Code and codex: `stop_hook_active`; agy: a nonzero `executionNum`),
+  Code and codex: `stop_hook_active`; agy: a nonzero `executionNum`;
+  grok: `stopHookActive`),
 - where the workspace roots live (Claude Code and codex: the `cwd`
-  string; agy: the `workspacePaths` list, every entry of which is
-  gated in a single pass - ordering semantics are undocumented, a
-  clean first root must not mask unreviewed changes in a later one,
-  and the loop guard allows the continued stop cycle wholesale, so a
-  denial must name and record every denying root at once, with the
-  recovery scoped per root via `--repo` whenever the payload is
-  multi-root),
-- which decision word blocks the stop (Claude Code and codex: `block`;
-  agy: `continue`).
+  string; grok: the `workspaceRoot` string, which grok resolves to the
+  git root itself; agy: the `workspacePaths` list, every entry of
+  which is gated in a single pass - ordering semantics are
+  undocumented, a clean first root must not mask unreviewed changes in
+  a later one, and the loop guard allows the continued stop cycle
+  wholesale, so a denial must name and record every denying root at
+  once, with the recovery scoped per root via `--repo` whenever the
+  payload is multi-root),
+- which decision word blocks the stop (Claude Code, codex, and grok:
+  `block`; agy: `continue`),
+- which fires are genuine stop attempts (grok's Stop event also fires
+  observe-only at session end, where a recorded denial would burn the
+  bridge's repeat guard without keeping the session working; the
+  other hosts gate every fire, the `gate_when` default).
 
 Claude Code defined the block-style protocol and codex adopted it
 verbatim, so those two shims (`review/claude_stop.py`, T16;
 `review/codex_stop.py`, T17) share the `CLAUDE_STYLE` instance defined
-here; agy's shim (`review/agy_stop.py`, T18) builds its own. The gate
+here; agy's shim (`review/agy_stop.py`, T18) and grok's
+(`review/grok_stop.py`, T19) each build their own. The gate
 asks the T15 bridge for a ruling and emits the deny decision as a
 top-level `{"decision": ..., "reason": ...}` object; an allow is silent
 - no output, exit 0.
@@ -63,11 +70,18 @@ class StopProtocol:
             entries that are non-empty strings, gates every one of
             them, and fails open when none remain.
         deny_decision: The `decision` value that blocks the stop.
+        gate_when: Whether this payload is a genuine stop attempt.
+            Defaults to gating every fire; a host whose Stop event also
+            fires for non-stop occasions (grok's observe-only
+            session-end fire, whose decision is ignored) supplies a
+            predicate so those fires are allowed silently and never
+            recorded.
     """
 
     loop_guard_key: str
     workspaces: Callable[[dict[str, Any]], object]
     deny_decision: str
+    gate_when: Callable[[dict[str, Any]], bool] = lambda payload: True
 
 
 CLAUDE_STYLE = StopProtocol(
@@ -94,6 +108,8 @@ def gate_stop(protocol: StopProtocol) -> int:
         return 0
     if not isinstance(payload, dict):
         logger.error("stop-hook input is not an object; failing open")
+        return 0
+    if not protocol.gate_when(payload):
         return 0
     if payload.get(protocol.loop_guard_key):
         return 0

@@ -13,9 +13,10 @@ project's `CLAUDE.md` picks them up) or onto individual developer machines. The
 a rulebook governing `jeltz` itself.
 
 Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
-grok. All four can act as the reviewer. Only three can enforce the gate.
+grok. All four can act as the reviewer, and all four can enforce the gate
+(the "only three" premise fell during T19 - see 3.5).
 
-Status: T1-T18 complete; next task is T19.
+Status: T1-T19 complete; next task is T20.
 
 ---
 
@@ -198,7 +199,7 @@ Resolved by the T9 probe (agy 1.1.13, live):
 **Sharp edge 3 - workspace trust.** `~/.gemini/antigravity-cli/settings.json`
 carries a `trustedWorkspaces` list. Consumer projects must be trusted.
 
-### 3.5 Grok has the best reviewer interface and no way to gate a stop
+### 3.5 Grok has the best reviewer interface (and, corrected: a Stop hook)
 
 `grok` 1.0.4, logged in via grok.com on a **free plan**, single model
 `grok-4.6`.
@@ -233,15 +234,14 @@ table covers `.claude/skills/`, `.claude/agents/`, `.claude/plugins/`,
 `.claude/settings*.json`. Claude Code **plugins** are consumed whole, including
 `hooks/hooks.json`. Nothing needs to be installed for grok specifically.
 
-**The disqualifying gap: no Stop hook.** Grok's documented hook events are
-pre/post-tool-use and session start/end, configured in `.grok/hooks/` or as
-`[[hooks.<Event>]]` in a config layer, behind a project trust prompt. There is
-no stop-blocking event. A grok session cannot be prevented from ending.
-
-The workaround is to gate *entry* rather than *exit*: a `PreToolUse` hook
-matching the edit tools (`search_replace`, `bash`) that denies edits while an
-unreviewed state exists. That is a different enforcement shape - deny-at-edit
-rather than deny-at-stop - and needs its own design (T19).
+**~~The disqualifying gap: no Stop hook.~~ Corrected during T19: grok DOES
+ship a blocking `Stop` hook** (verified live, grok 1.0.4, 2026-08-17 - the
+original 2026-08-14 finding missed it). The hook is Claude-Code-compatible
+(`{"decision": "block", "reason": ...}` on stdout; the reason reaches the
+model - proven by a headless round trip whose response grew a second line
+after the block). Full contract in 3.6. The originally planned deny-at-edit
+`PreToolUse` workaround is therefore unnecessary and was not built; T19
+shipped a standard Stop shim instead (see the T19 requirement change).
 
 **Operational caveat.** Interface quality and operational suitability are
 separate axes. The interface is the best of the four; the free plan's rate
@@ -255,7 +255,7 @@ and a weak default primary, on interface grounds alone.
 | Claude Code | `Stop` hook returns a top-level `{"decision": "block", "reason": "..."}` or exits 2 with the reason on stderr; `hookSpecificOutput` decisions belong to other events (PreToolUse, PermissionRequest). Receives `stop_hook_active`. Default timeout 600s. (Re-verified against the hooks reference during T16 review; the row previously recorded a nested deny schema that Claude Code ignores for Stop.) |
 | Codex | Speaks the Claude-Code-style Stop protocol verbatim: `Stop` hook blocks with a top-level `{"decision": "block", "reason": "..."}` on exit 0 (or exit 2 with the reason on stderr); other nonzero exits fail open. Input adds `turn_id`, `model`, `permission_mode`, `last_assistant_message`, nullable `transcript_path`; receives `stop_hook_active`. Config: `~/.codex/hooks.json` or `[[hooks.Stop]]` tables in `config.toml`. Trust model: non-managed hooks need one-time trust via `/hooks`; `--dangerously-bypass-hook-trust` skips it (never recommend). Caveat: hooks in repo-local `.codex/config.toml` reportedly do not fire in interactive sessions (openai/codex#17532) - install at user scope. (Verified against the codex hooks reference during T17; codex-cli 0.147.0.) |
 | Antigravity | `Stop` hook blocks with `{"decision": "continue", "reason": "..."}` on stdout (continue = keep working; the reason reaches the model); silence allows. Input is camelCase: `workspacePaths` (list of every mounted workspace root, `--add-dir` mounts more than one; ordering semantics undocumented - there is no `cwd`), `executionNum` (counts Stop-hook firings within one stop cycle: 0 on the first attempt, incrementing on each forced continuation, and resetting to 0 for each independent stop - proven by resuming a conversation whose previous stop had reached 1 and observing the next cycle start at 0; the `stop_hook_active` analog), `terminationReason` (`NO_TOOL_CALL` on a normal print-mode stop), `fullyIdle`, `conversationId`, `transcriptPath`, `artifactDirectoryPath`, `modelName`, `error`. Config: `.agents/hooks.json` at the workspace root or user-global `~/.gemini/config/hooks.json` under `{"<hook-name>": {"Stop": [{"type": "command", "command": ..., "timeout": ...}]}}`. Default timeout 30s. Caveat: in print mode, hooks (like skills, 3.4) fire only with a project context - `--new-project` or an existing project. Also `PostInvocation` with `terminationBehavior: "force_continue"`, and `PreToolUse` with `deny`. (Verified live during T18: dump-hook payload capture, a continue-decision round trip, and a resumed-conversation probe of the `executionNum` reset; agy 1.1.13.) |
-| Grok | **None.** PreToolUse / PostToolUse / session start / end only. See 3.5. |
+| Grok | `Stop` hook blocks with the Claude vocabulary: top-level `{"decision": "block", "reason": "..."}` on stdout (exit 2 with stderr also blocks; other failures fail open); the reason reaches the model. Input is camelCase: `workspaceRoot` (grok resolves it to the git root even when the session's `cwd` is a subdirectory; arrives with a trailing slash), `cwd`, `stopHookActive` (true on every fire after a block this turn - the `stop_hook_active` analog), `reason` (`end_turn` on a genuine stop; an extra observe-only Stop fires at session end with `shutdown`/`channel_closed`, its decision parsed but ignored - a gate MUST filter on `end_turn` or it records denials the session can never act on), `hookEventName`, `sessionId`, `promptId`, `permissionMode`, `timestamp`, `transcriptPath`, `lastAssistantMessage`, `backgroundTasks`, `sessionCrons`. Grok force-stops after 8 continuations per turn. Config: any `*.json` under project `.grok/hooks/` (silently skipped until one-time folder trust via `/hooks-trust` or `--trust`, stored in `~/.grok/trusted_folders.toml`) or `~/.grok/hooks/` (always trusted); also `[[hooks.Stop]]` in config.toml layers, and Claude-compat sources (`.claude/settings*.json`) are scanned too. Default Stop-gate timeout 600s. (Verified live during T19: dump-hook payload capture headless, a block-decision round trip, a `stopHookActive` continuation fire, the session-end observe fire, and a subdirectory-launch probe of `workspaceRoot`; grok 1.0.4. Corrects the 2026-08-14 "no Stop hook" finding.) |
 
 Antigravity's 30-second default hook timeout is far too short to run a review
 inline, so the gate must read a pre-computed state file rather than perform the
@@ -354,14 +354,21 @@ verdict cannot be scraped from prose.
 
 ### 4.3 Distribution matrix
 
-Four hosts, but only **three packaging targets**, because grok consumes the
-Claude Code layout natively (3.5):
+Four hosts, but only **three packaging targets for skills**, because grok
+consumes the Claude Code layout natively (3.5):
 
 | Target | Project scope (checked into consumer repo) | User scope | Serves |
 |---|---|---|---|
 | Claude Code layout | `.claude/skills/`, `.claude/settings.json`, or a plugin with `hooks/hooks.json` | `~/.claude/` | Claude Code, grok |
 | Codex layout | unverified - T2 spike | `$CODEX_HOME/skills/`, `config.toml` | Codex |
 | Antigravity layout | `.agents/skills/`, `.agents/hooks.json`, `.agents/skills.json` | `~/.gemini/config/` | Antigravity |
+
+**Exception (T19): the Stop-gate hook is per-host even on grok.** Grok does
+scan `.claude/settings.json` hooks, but it would then run the T16 shim, whose
+snake_case `stop_hook_active` guard and unfiltered session-end fires do not
+match grok's camelCase payload (3.6). The grok gate therefore ships as its own
+hook file under `.grok/hooks/` invoking `review/grok_stop.py` (wiring is T21),
+and grok project hooks need a one-time `/hooks-trust` (or `--trust`) grant.
 
 Packaging the Claude Code target as a **plugin** is worth evaluating in T2:
 grok discovers plugin skills, agents, hooks, and MCP servers as a unit, so one
@@ -384,11 +391,11 @@ the code it guards.
 - **R3. Gate false positives.** The gate must not fire on doc-only edits or
   sessions that touched nothing tracked, or the first person it annoys will
   delete it. Primary adoption risk for Problem B.
-- **R4. Gate bypass.** Anyone can delete a hook, and grok cannot be gated at
-  stop at all (3.5). This raises the floor for honest mistakes; it is not an
-  adversarial control. CI remains the real backstop and should eventually
-  verify a review record per commit - which is also the only gate that covers
-  grok users completely.
+- **R4. Gate bypass.** Anyone can delete a hook (and grok's project hooks
+  additionally need a one-time folder-trust grant before they run at all,
+  3.6). This raises the floor for honest mistakes; it is not an adversarial
+  control. CI remains the real backstop and should eventually verify a review
+  record per commit.
 - **R5. Hook timeouts vary wildly** - 600s on Claude Code, 30s default on
   antigravity. The gate must be a fast state-file check; the review runs
   elsewhere.
@@ -1580,17 +1587,61 @@ source and tries to stop; the shim denies once with the instruction, the
 session runs the literal command against a scripted backend, reaches
 acceptance, and the next stop is silent.
 
-#### T19. Grok deny-at-edit gate
-Goal: the only enforcement shape available on grok (3.5).
-- `PreToolUse` hook matching `search_replace` and `bash`, denying edits while
-  the tree is in an unreviewed state.
-- Decide the entry condition: gating every edit is too aggressive for a normal
-  TDD cycle, so it likely keys on "changes exist that were never reviewed AND
-  the session is past some threshold" rather than on the first edit.
-- Document that this is weaker than a stop gate and that CI (R4) is the real
-  backstop for grok users.
-Acceptance: a grok session cannot silently accumulate unreviewed changes past
-the configured threshold.
+#### T19. Grok Stop hook shim (was: deny-at-edit gate) - DONE
+Goal was: the only enforcement shape available on grok, believed to be a
+`PreToolUse` deny-at-edit gate because finding 3.5 said grok had no
+stop-blocking hook event.
+
+**REQUIREMENT CHANGE - accepted by accepting this task.** Pre-RED research
+disproved the premise live (grok 1.0.4, 2026-08-17): grok ships a blocking,
+Claude-Code-compatible `Stop` hook, proven by a headless round trip in which
+`{"decision": "block", "reason": ...}` kept the agent working and the reason
+reached the model (the response grew a second line), with `stopHookActive`
+true on the continuation fire. The deny-at-edit gate was a workaround for a
+gap that does not exist - its own spec called it "weaker than a stop gate"
+and left the entry-condition threshold unresolved - so T19 shipped the
+standard Stop shim in the T16-T18 shape instead (the bridge and gate
+docstrings had always said "shims (T16-T19)"). Human acceptance of T19 is
+acceptance of this change; reject it to have the deny-at-edit `PreToolUse`
+gate built as originally specified. The corrected host contract is recorded
+in 3.5/3.6 with the probe evidence.
+
+Delivered: `review/grok_stop.py` (5 statements, 100% coverage) and
+`tests/test_grok_stop.py` (10 tests, 12 instances) pinning grok's
+live-verified contract; findings 3.5/3.6, R4, and 4.3 corrected.
+
+Behavior:
+- Runs the shared `review.stop_hook.gate_stop` under grok's protocol:
+  loop guard `stopHookActive` (camelCase; true on every fire after a block
+  this turn), workspace root from `workspaceRoot` (grok resolves it to the
+  git root even when the session's cwd is a subdirectory - verified live by
+  a subdirectory launch; gated instead of `cwd` because the state file and
+  the recovery commands live at the root), deny decision `block` (Claude's
+  vocabulary; the reason carries the T15 recovery instruction).
+- Gates only `reason == "end_turn"`: grok also fires an observe-only Stop at
+  session end (`shutdown`/`channel_closed`) whose decision is parsed but
+  ignored - gating it would record a denial the session can never act on,
+  burning the bridge's one-denial-per-tree guard for the next genuine stop.
+  Implemented as a new optional `StopProtocol.gate_when` predicate
+  (default: gate every fire), so the other three shims are untouched.
+- Safety: grok force-stops after 8 continuations per turn and Stop gates
+  default to a 600s timeout, so the shim can never trap a session even
+  without its own guards; hook failures fail open on grok's side too.
+
+Installation (wiring is T21): a JSON hook file under project `.grok/hooks/`
+(any name) with a `Stop` entry invoking the shim; project hooks are silently
+skipped until a one-time folder-trust grant (`/hooks-trust` or `--trust`,
+recorded in `~/.grok/trusted_folders.toml`). User scope: `~/.grok/hooks/`,
+always trusted. The Claude-compat `.claude/settings.json` path is NOT used
+for grok (see 4.3): it would run the T16 shim against a camelCase payload.
+
+Acceptance: original criterion ("a grok session cannot silently accumulate
+unreviewed changes past the configured threshold") is satisfied strictly
+more strongly - no unreviewed source change survives a stop attempt at all.
+`test_denied_session_reaches_acceptance_and_stops` runs the T15 loop end to
+end through the shim; the deny round trip, continuation-fire guard,
+session-end filter, and workspaceRoot resolution are each pinned by a test
+mirroring a live capture.
 
 #### T20. Wire `tdd-phase-loop` to the loop
 - PHASE 3's terminal stop becomes PHASE 4 (REVIEW): run `--new`; on exit 10
