@@ -6,6 +6,7 @@ Centralizing that here keeps the callers to one obvious spelling and keeps
 binary-safe output (needed for diff hashing) next to the text variant.
 """
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -58,6 +59,29 @@ def git_bytes(repo: Path, *args: str) -> bytes:
     return result.stdout
 
 
+def git_paths(repo: Path, *args: str) -> tuple[str, ...]:
+    """Run a git command emitting NUL-delimited paths and decode them.
+
+    Newline-delimited git listings C-quote any path with non-ASCII or
+    control characters (``core.quotePath``), and the quoted form names no
+    file on disk. NUL-delimited output is never quoted, and ``os.fsdecode``
+    round-trips whatever bytes the filesystem actually holds. Callers pass
+    the ``-z`` flag themselves so the command shown is the command run.
+
+    Args:
+        repo: Repository (or worktree) directory to run in.
+        *args: The git subcommand and its arguments, including ``-z``.
+
+    Returns:
+        The decoded paths, in git's output order.
+
+    Raises:
+        subprocess.CalledProcessError: If git exits non-zero.
+    """
+    raw = git_bytes(repo, *args)
+    return tuple(os.fsdecode(chunk) for chunk in raw.split(b"\0") if chunk)
+
+
 def untracked_files(repo: Path) -> tuple[str, ...]:
     """List untracked files, excluding gitignored ones and `.jeltz/`, sorted.
 
@@ -74,7 +98,5 @@ def untracked_files(repo: Path) -> tuple[str, ...]:
     Returns:
         Sorted relative paths of untracked, un-ignored files.
     """
-    listing = git(repo, "ls-files", "--others", "--exclude-standard")
-    return tuple(
-        sorted(path for path in listing.splitlines() if not path.startswith(".jeltz/"))
-    )
+    listing = git_paths(repo, "ls-files", "--others", "--exclude-standard", "-z")
+    return tuple(sorted(path for path in listing if not path.startswith(".jeltz/")))

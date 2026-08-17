@@ -15,7 +15,7 @@ a rulebook governing `jeltz` itself.
 Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer. Only three can enforce the gate.
 
-Status: T1-T13 complete; next task is T14.
+Status: T1-T14 complete; next task is T15.
 
 ---
 
@@ -1313,15 +1313,59 @@ Hardened after review (two blockers, both reproduced red):
 
 ### Phase 3 - enforcement
 
-#### T14. Gate logic (host-neutral)
-Goal: one implementation, thin host shims.
-- Read `.jeltz/review/state.json`; compare its diff hash against the tree.
-- Decide allow / block, with a reason string.
-- Fast enough for a 30s hook budget (R5) - state file only, never a review.
-- Scope exclusions per R3: docs-only, no tracked changes, opt-out marker
-  alongside the existing `claude-hook-mode` convention.
-Acceptance: blocks unreviewed source changes, allows doc-only edits, cannot
-deadlock a session.
+#### T14. Gate logic (host-neutral) - DONE
+Goal was: one implementation, thin host shims; read
+`.jeltz/review/state.json`, compare its diff hash against the tree, decide
+allow / block with a reason string, within a 30s hook budget (R5), with the
+R3 scope exclusions.
+
+Delivered: `review/gate.py` (68 statements) plus `git_paths` in
+`review/gitcmd.py` (now 15 statements); behavior pinned by 17 tests
+(22 instances) in `tests/test_gate.py` and one packet regression test. All
+`review/` modules hold the 100% coverage gate.
+
+Behavior:
+- `decide(repo)` returns a frozen `GateDecision(allow, reason)`. It only
+  reads the state file and hashes the tree - it never runs a review.
+- Allow paths, in order: per-clone opt-out marker
+  `<git-common-dir>/info/jeltz-review-gate` whose first line reads `off`
+  (the `claude-hook-mode` convention: per-clone, never committed); not a
+  git repository; a tree git cannot diff (no commits yet) fails open;
+  nothing changed (tracked or untracked); doc-only changes (suffixes
+  `.md` / `.rst` / `.txt`, or anything under `docs/`); a recorded review
+  whose diff hash matches the tree and whose verdict is ACCEPTED or
+  ACCEPTED_WITH_NON_BLOCKERS; an escalated review (automation ended - a
+  human owns it, and blocking the stop would trap the session).
+- Block paths: unreviewed source changes with no usable state (corrupt
+  state is "no review record", never a crash); a recorded hash that no
+  longer matches the tree (the review is stale); a matching hash whose
+  verdict is still REQUIRES_CHANGES.
+
+Decisions recorded:
+- **Untracked source gates the stop.** The changed-path set is the tracked
+  diff plus untracked files, matching `tree_state_hash` scope - a new
+  unreviewed module cannot bypass the gate just because it was never
+  `git add`ed.
+- **The gate fails open, never closed.** Every state it cannot gate (no
+  repo, no HEAD, escalated) allows with a reason; R4 says this raises the
+  floor for honest mistakes, and CI is the backstop - a deadlocked session
+  is the one outcome that guarantees the hook gets deleted (R3).
+- **The gate's state loader is looser than the orchestrator's** on
+  purpose: it needs only `diff_hash`, `verdict`, and `escalated`, and
+  anything unusable is a block-with-instruction, which T15 turns into a
+  recovery path.
+
+Hardened after review (one blocker, reproduced red):
+- **Git path listings are NUL-delimited and fsdecode'd.** Newline-delimited
+  git output C-quotes non-ASCII paths (`core.quotePath`), so a quoted doc
+  name was misclassified as source and a quoted untracked path crashed
+  `tree_state_hash` with FileNotFoundError - a crash in the hook path.
+  `review/gitcmd.py` gained `git_paths` (runs with `-z`, decodes with
+  `os.fsdecode`); both `untracked_files` and the gate's changed-path scan
+  use it, fixing the packet builder and the gate together. Regression
+  tests cover a tracked and an untracked non-ASCII doc (allowed), a
+  non-ASCII source file after a review (blocks as stale, no crash), and
+  the packet carrying the real on-disk path.
 
 #### T15. Stop-gate recovery bridge
 Goal: make a denied stop actually produce a review. Without this, T14 blocks a

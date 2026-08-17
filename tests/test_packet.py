@@ -158,3 +158,15 @@ def test_render_carries_every_section(dirty_repo: Path) -> None:
         packet.diff_hash,
     ):
         assert expected in rendered
+
+
+def test_untracked_non_ascii_paths_are_real_paths(dirty_repo: Path) -> None:
+    """Git C-quotes non-ASCII names; the packet must carry the real path.
+
+    The quoted form ("caf\\303\\251.py") names no file on disk, so it
+    would both mislead the reviewer and crash the diff hash.
+    """
+    git(dirty_repo, "config", "core.quotepath", "true")
+    (dirty_repo / "caf\u00e9.py").write_text("NEW = True\n")
+    packet = build_packet(dirty_repo, wip_message="wip: unicode filename")
+    assert "caf\u00e9.py" in packet.untracked
