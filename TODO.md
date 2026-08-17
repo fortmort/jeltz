@@ -16,7 +16,8 @@ Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer, and all four can enforce the gate
 (the "only three" premise fell during T19 - see 3.5).
 
-Status: T1-T20 complete; next task is T21.
+Status: T1-T20 complete; next task is T21. T32-T37 (added 2026-08-17
+after T20's acceptance) are Phase 5 work and must land before Phase 6.
 
 ---
 
@@ -367,8 +368,9 @@ consumes the Claude Code layout natively (3.5):
 scan `.claude/settings.json` hooks, but it would then run the T16 shim, whose
 snake_case `stop_hook_active` guard and unfiltered session-end fires do not
 match grok's camelCase payload (3.6). The grok gate therefore ships as its own
-hook file under `.grok/hooks/` invoking `review/grok_stop.py` (wiring is T21),
-and grok project hooks need a one-time `/hooks-trust` (or `--trust`) grant.
+hook file under `.grok/hooks/` invoking `review/grok_stop.py` (T34 installs
+the wiring, T21 documents it), and grok project hooks need a one-time
+`/hooks-trust` (or `--trust`) grant.
 
 Packaging the Claude Code target as a **plugin** is worth evaluating in T2:
 grok discovers plugin skills, agents, hooks, and MCP servers as a unit, so one
@@ -377,6 +379,11 @@ plugin directory could cover two hosts with a single install step.
 Project scope is strongly preferred for Problem B: a developer who clones the
 repo gets the gate without installing anything, and the gate is versioned with
 the code it guards.
+
+The T2 installer covers only the skills rows of this matrix. Shipping the
+review engine into consumers is T33; installing the per-host stop-gate
+wiring is T34 - today neither is installed by anything (verified
+2026-08-17: install.sh handles skills only).
 
 ---
 
@@ -1628,7 +1635,8 @@ Behavior:
   default to a 600s timeout, so the shim can never trap a session even
   without its own guards; hook failures fail open on grok's side too.
 
-Installation (wiring is T21): a JSON hook file under project `.grok/hooks/`
+Installation (T34 installs the wiring, T21 documents it): a JSON hook file
+under project `.grok/hooks/`
 (any name) with a `Stop` entry invoking the shim; project hooks are silently
 skipped until a one-time folder-trust grant (`/hooks-trust` or `--trust`,
 recorded in `~/.grok/trusted_folders.toml`). User scope: `~/.grok/hooks/`,
@@ -1865,6 +1873,177 @@ Acceptance: no `rm -rf` (or equivalent forced recursive delete) remains
 in install.sh; every refusal path is exercised by a test and produces an
 actionable error message; install/reinstall/check flows still pass the
 existing suite.
+
+(T32-T37 were added 2026-08-17 after T20's acceptance review; they are
+numbered after the Phase 6 tasks but must land before Phase 6 begins.)
+
+#### T32. Collision-resistant temp and evidence files (multi-agent hygiene)
+Goal: nothing the loop writes can collide when several agents run in the
+same directory (2026-08-17 direction: assume multiple agents per
+directory; unique names via UUID/session id, created atomically).
+- `write_state` (review/run.py) composes its atomic write through a
+  FIXED temp name (`state.json.tmp`): two concurrent writers race on the
+  temp file even though the final `replace` is atomic. Switch to a
+  unique per-writer temp (`tempfile.mkstemp` in the state directory) +
+  `os.replace`, and handle crash leftovers safely (age- or pid-guarded
+  cleanup, never "delete all *.tmp").
+- The T20 skill instructs fixed example evidence names
+  (`.jeltz/review/verify.txt`, `wip-message.txt`, and the response
+  file). Make the instruction collision-resistant: create each file with
+  `mktemp` under `.jeltz/review/` (unique and atomic) and pass the
+  resulting paths to `--verify-output` / `--wip-message-file` /
+  `--response-file`; update the skill text and the tests that pin it.
+- Audit every other write for the same property. Already correct and the
+  model to follow: worktree parents come from `mkdtemp` with a pid file,
+  and `reap_stale_worktrees` reaps only when `_owner_alive` proves the
+  owning process is gone (verified 2026-08-17) - a live concurrent
+  agent's worktree survives.
+- Scope boundary: this task is transient files only. The shared per-tree
+  singletons (`state.json`, `escalation.md`) need a real concurrency
+  protocol, which is T36 - do not half-solve it here.
+Acceptance: no fixed-name temp path remains in shipped code or skill
+text; a test exercises two interleaved `write_state` writers and the
+surviving file is always one writer's complete, well-formed output
+(never torn); the audit's findings are recorded in this entry.
+
+#### T33. Installer ships the review engine (depends on T22)
+Goal: a consumer repo gets a working `review/run.sh` from install.sh
+alone - consumers do not operate out of the jeltz checkout, and today
+install.sh ships skills only (verified 2026-08-17: no review/ or hooks/
+handling at all).
+- Project-scope install copies the review engine into the consumer repo:
+  `review/` (the Python package, `run.sh`, `verdict.schema.json`,
+  `tool-allowlists.json`), manifest-stamped like the skills so `--check`
+  reports drift on engine files too. The bridge's recovery instruction
+  and the T20 skill both hardcode the `review/run.sh` relative path, so
+  the install location is fixed by contract.
+- The installer MUST provision the consumer's production dependencies
+  (2026-08-17 direction: "the install must install the review scripts
+  and dependencies"; T22's split makes `jsonschema` production). Decide
+  the mechanism in-task - e.g. uv/pip provisioning a consumer
+  environment from jeltz's pyproject - but installing them is required;
+  a preflight in run.sh that names a missing dependency actionably is
+  defense-in-depth for later environment breakage, never a substitute
+  for installation. Note: T23's uv move provisions jeltz DEVELOPMENT
+  only - it does not cover consumers by itself (2026-08-17 question,
+  answered).
+- Verify run.sh's import assumptions hold when vendored: it execs
+  `python3 -c 'from review.run import main'` relative to its own
+  location, which must keep working from the consumer root.
+- Respect T27's no-rm-rf rules; coordinate ordering with it.
+Acceptance: starting from an environment where `jsonschema` is not
+importable and a fresh consumer repo with no jeltz checkout on disk,
+running install.sh alone yields a `review/run.sh --new` that completes a
+round against the scripted backend using the environment the installer
+provisioned; tampering with an engine file trips `--check`; breaking the
+environment afterward produces the preflight's named, actionable error.
+
+#### T34. Installer wires the stop gate per host (depends on T33)
+Goal: the Problem B gate is actually installed, not just documented -
+nothing installs the T16-T19 shims' hook configs today (T19 recorded
+"wiring is T21", but T21 is documentation only).
+- Project scope for the three hosts whose project hooks fire, at each
+  host's 3.6-verified config location: Claude Code Stop-hook entry
+  invoking `review/claude_stop.py`, agy `.agents/hooks.json` invoking
+  `review/agy_stop.py`, grok a `.grok/hooks/` JSON file invoking
+  `review/grok_stop.py` - with grok's one-time folder-trust requirement
+  (`/hooks-trust` or `--trust`, 3.6) surfaced in the install output,
+  since an untrusted project hook is silently skipped.
+- Codex is user scope by contract, not project scope: repo-local hooks
+  reportedly do not fire in interactive sessions (3.6,
+  openai/codex#17532). The codex gate (`review/codex_stop.py`) installs
+  into `~/.codex/hooks.json` (or user config.toml) as an explicit,
+  consented step of the `--user` flow - never silently from a project
+  install - with codex's one-time `/hooks` trust step surfaced. Record
+  the Problem B implication: a codex developer is gated only after that
+  user-scope step; the consumer repo cannot ship it, and CI (R4)
+  remains the backstop there.
+- Merge, never clobber: an existing consumer settings file gains the
+  hook entry; anything unmergeable is a refusal with an actionable
+  message (T27 philosophy).
+- Print the per-clone opt-out pointer (`info/jeltz-review-gate`, T14) so
+  R3's escape hatch is discoverable at install time.
+Acceptance: after a project-scope install, the three project-scope
+hosts' configs invoke the right shims, and after the user-scope step,
+codex's does (all pinned by tests over the written files); pre-existing
+consumer settings survive byte-for-byte outside the added entry; the
+grok and codex trust steps appear in the respective install output;
+`--check` covers the wiring files.
+
+#### T35. Fix the recursive `make test` re-execution; profile the rest
+Goal: suite wall time proportionate to its size; today ~220s for ~395
+tests, and the dominant cost is already attributed (2026-08-17):
+`test_make_test_passes_on_clean_checkout` takes 113s because it re-runs
+the ENTIRE suite recursively inside `make test` (bounded to one level by
+`JELTZ_MAKE_TEST_INNER`) - so venv re-provisioning/pip downloads are NOT
+the main cause; the recursion is, and the T23 uv move alone will not fix
+it.
+- Fix the recursion: the self-referential `make test` check should
+  prove wiring (make invokes pytest with the coverage gate and a fresh
+  stamp), not re-execute every test - e.g. bound the inner run to a
+  cheap subset via a make/pytest variable while keeping the outer gates
+  intact, or assert on `-n` dry-run output plus a minimal real run.
+- Record the before/after wall-clock numbers in this entry, plus a full
+  `pytest --durations=25` profile of the post-fix suite. That profile is
+  the decomposition input: T37 takes only the single highest-cost
+  attributed cause, and every further cause worth fixing gets its own
+  numbered task filed here during T35 (one cause per task), so no
+  open-ended optimization ever sits inside one task.
+- Keep the gates intact: 100% coverage, 100% pass; no test deleted or
+  weakened to win time. Long-tail optimization of other suites is
+  explicitly out of scope here (T37).
+Acceptance: the recursive full-suite re-execution is gone; before/after
+numbers and the durations profile are recorded here; `make verify` still
+green with the same gates.
+
+#### T36. Concurrency-safe review state protocol (depends on T32)
+Goal: two agents in the same directory each complete a full review
+lifecycle without corrupting each other's records. Last-writer-wins is
+NOT acceptable (2026-08-17 review): T32's unique staging files stop torn
+JSON, but a whole-file overwrite still lets one agent clobber another's
+`thread_id`, `round`, verdict, or denial marker - and a lock held only
+for the duration of `write_state` has the same logical failure, just
+narrower.
+- Design first, then implement, and record the decision and rationale:
+  either session-scoped records (state keyed by session/agent identity,
+  the T14 gate consulting whichever record matches the tree hash) or
+  serialization covering the complete review lifecycle (a lock spanning
+  new -> rounds -> verdict, with crash/staleness recovery so an
+  abandoned lock cannot wedge the directory - the pid-file pattern
+  `reap_stale_worktrees` uses is the house precedent).
+- The bridge's denial merge (`_record_denial` in review/bridge.py) is a
+  read-modify-write over the same file and must live under the same
+  protocol: today a concurrent denial can drop a just-written review
+  record or vice versa.
+- The T14 gate and T15 bridge readers must keep ruling correctly against
+  the new state shape.
+- The escalation dossier is under the same protocol - no exemption: it
+  is the evidence a human tiebreak runs on, so losing one to an
+  overwrite defeats the escalation path. Either session-scoped dossier
+  paths or serialization proving a dossier cannot be replaced before its
+  tiebreak is resolved; every literal `.jeltz/review/escalation.md`
+  reference (the T15 recovery instruction, the T20 skill, run.py's
+  messages) must track whatever naming lands.
+Acceptance: a test interleaves two agents through independent
+new/resume lifecycles in one directory and both finish with intact
+per-agent histories (thread, round, verdict); a concurrent
+denial-vs-state-write test loses neither record; two concurrent
+escalations lose neither dossier; the gate's ruling for the tree is
+still correct afterward; the design decision is recorded in this entry.
+
+#### T37. Fix the single highest-cost profiled test (depends on T35)
+Goal: one bounded fix for the one attributed cause T35's profile ranks
+highest - nothing else. Further causes are separate tasks, filed during
+T35's decomposition step; this task's scope is fixed the moment the
+profile exists.
+- Take the top entry of T35's durations profile, attribute its cost
+  (expected suspects: subprocess-heavy adapter, worktree, or
+  makefile-fixture setup), and apply one fix - e.g. share the expensive
+  fixture where isolation permits, replace in-test pip provisioning with
+  T23's cached uv sync, or batch redundant subprocess spawns.
+- Gates intact: 100% coverage, 100% pass; no test deleted or weakened.
+Acceptance: the targeted cause's before/after numbers recorded here and
+the top profile entry's cost materially reduced; `make verify` green.
 
 ### Phase 6 - branch closeout
 
