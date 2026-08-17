@@ -15,7 +15,7 @@ a rulebook governing `jeltz` itself.
 Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer. Only three can enforce the gate.
 
-Status: T1-T15 complete; next task is T16.
+Status: T1-T16 complete; next task is T17.
 
 ---
 
@@ -252,7 +252,7 @@ and a weak default primary, on interface grounds alone.
 
 | Host | Mechanism |
 |---|---|
-| Claude Code | `Stop` hook returns `{"hookSpecificOutput": {"hookEventName": "Stop", "decision": "deny", "reason": "..."}}` or exits 2. Receives `stop_hook_active`. Default timeout 600s. |
+| Claude Code | `Stop` hook returns a top-level `{"decision": "block", "reason": "..."}` or exits 2 with the reason on stderr; `hookSpecificOutput` decisions belong to other events (PreToolUse, PermissionRequest). Receives `stop_hook_active`. Default timeout 600s. (Re-verified against the hooks reference during T16 review; the row previously recorded a nested deny schema that Claude Code ignores for Stop.) |
 | Codex | Hooks system (`config.toml` or `hooks.json`) with `Stop`, `PreToolUse`, `SessionStart`, plus a trust model (`/hooks`, `--dangerously-bypass-hook-trust`). |
 | Antigravity | `.agents/hooks.json` `Stop` handler returns `{"decision": "continue", "reason": "..."}`. Also `PostInvocation` with `terminationBehavior: "force_continue"`, and `PreToolUse` with `deny`. Default timeout 30s. |
 | Grok | **None.** PreToolUse / PostToolUse / session start / end only. See 3.5. |
@@ -1414,10 +1414,57 @@ Hardened after review (one blocker, reproduced red):
   failing-open reason (CI is the backstop, R4). Regression test pins the
   posture.
 
-#### T16. Claude Code Stop hook shim
-- Translate T14's decision to `decision: "deny"` / exit 2, carrying T15's
-  instruction as the reason; respect `stop_hook_active`; never block twice for
-  the same state.
+#### T16. Claude Code Stop hook shim - DONE
+Goal was: translate T14's decision to `decision: "deny"` / exit 2, carrying
+T15's instruction as the reason; respect `stop_hook_active`; never block
+twice for the same state.
+Delivered: `review/claude_stop.py` (26 statements) exposing `main()`, the
+first host shim over the T15 bridge; behavior pinned by 8 tests
+(9 instances) in `tests/test_claude_stop.py`, including the end-to-end
+acceptance fixture through the shim.
+Behavior:
+- Reads the Stop-hook payload from stdin; a denial is emitted as the
+  documented Stop schema - a top-level `{"decision": "block",
+  "reason": ...}` on stdout with exit 0, the reason being the bridge's
+  verbatim gate reason plus recovery instruction. An allow is silent -
+  no output, exit 0.
+- `stop_hook_active` true allows immediately without consulting the
+  bridge: the shim never contributes to a stop-hook loop and never
+  records a denial for a stop it did not gate.
+- Never blocks twice for the same tree: the bridge's repeat-denial guard
+  reaches the host through the shim (second attempt is silent).
+- Fail-open on unusable input: unparseable stdin, a non-object payload,
+  or a missing/unusable `cwd` allows the stop with a logged error (CI is
+  the backstop, R4).
+Decisions recorded:
+- Of the two documented blocking mechanisms (structured JSON with
+  exit 0 vs exit 2 with the reason on stderr), the shim uses the
+  structured-JSON path: the reason travels in a typed field instead of
+  scraped stderr, and a constant exit 0 keeps the fail-open contract
+  trivially auditable - every path out of `main` is an exit the host
+  treats as success.
+- No `__main__` block or shell wrapper in this task: `review/run.sh`
+  sets the convention (a thin `.sh` resolves PYTHONPATH and execs
+  `main()`), and hook wiring/installation is T21's deliverable - the
+  Makefile's shell-lint list and installer tests pin any new script, so
+  it must land with its own tests, not as a refactor side effect.
+Acceptance shown end-to-end through the shim: a session edits tracked
+source and tries to stop; the shim denies once with the instruction, the
+session runs the literal command against a scripted backend, reaches
+acceptance, and the next stop is silent.
+
+Hardened after review (one blocker, reproduced red):
+- **The denial now speaks Claude Code's actual Stop schema.** The shim
+  emitted `{"hookSpecificOutput": {"hookEventName": "Stop", "decision":
+  "deny", ...}}`, faithfully implementing section 3.6's research row -
+  which was wrong: the hooks reference specifies a top-level
+  `{"decision": "block", "reason": ...}` for Stop, and nests decisions
+  under `hookSpecificOutput` only for other events (PreToolUse,
+  PermissionRequest). A real Claude session would have ignored the
+  denial entirely. Tests were flipped to the documented schema first
+  (red), the emission fixed, and the 3.6 row corrected with a note on
+  the re-verification. The schema test now pins the exact key set so a
+  wrapper regression cannot sneak back in.
 
 #### T17. Codex Stop hook shim
 - Same decision and instruction, codex hooks schema; document installation
