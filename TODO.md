@@ -16,7 +16,7 @@ Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer, and all four can enforce the gate
 (the "only three" premise fell during T19 - see 3.5).
 
-Status: T1-T19 complete; next task is T20.
+Status: T1-T20 complete; next task is T21.
 
 ---
 
@@ -1643,12 +1643,95 @@ end through the shim; the deny round trip, continuation-fire guard,
 session-end filter, and workspaceRoot resolution are each pinned by a test
 mirroring a live capture.
 
-#### T20. Wire `tdd-phase-loop` to the loop
-- PHASE 3's terminal stop becomes PHASE 4 (REVIEW): run `--new`; on exit 10
-  invoke `reviewer-response` in-session (keeping the coder's context), then
-  `--resume`; the human approval gate moves to after convergence.
-Acceptance: a full task completes RED through REVIEW with no terminal switching
-and no copy-paste.
+#### T20. Wire `tdd-phase-loop` to the loop - DONE
+Goal was: PHASE 3's terminal stop becomes PHASE 4 (REVIEW): run `--new`; on
+exit 10 invoke `reviewer-response` in-session (keeping the coder's context),
+then `--resume`; the human approval gate moves to after convergence.
+
+Delivered: `skills/tdd-phase-loop/SKILL.md` rewritten around a fourth phase,
+with the contract pinned by `tests/test_phase_loop_skill.py` (12 tests, the
+T3/T5 skill-test pattern - the skill text IS the contract four hosts consume).
+
+Behavior:
+- REFACTOR no longer ends the workflow. Its literal is now
+  `REFACTOR PHASE COMPLETE -- proceeding to REVIEW.` and PHASE 4 begins
+  automatically; the terminal literal is
+  `REVIEW PHASE COMPLETE -- awaiting human approval.` All four phase-stop
+  lines are exact 7-bit ASCII literals automation can match byte-for-byte
+  (the T5 precedent).
+- PHASE 4 runs the loop from inside the coding session: `review/run.sh
+  --new`; on exit 10 apply `reviewer-response` in this same session (the
+  coder's context - TODO item, diff, reasoning - stays available to the
+  fixer), save the complete output including the fenced `dispositions`
+  block to a response file, then `review/run.sh --resume --response-file
+  <response>`; repeat until exit 0 (proceed to the final STOP) or exit 20
+  (stop, hand `.jeltz/review/escalation.md` to the human). Other exit codes
+  are operational failures to fix and retry - never a reason to skip the
+  review.
+- The human gate moves to after convergence: the human approves work the
+  reviewer has already accepted, or arbitrates an escalation dossier -
+  never raw REFACTOR output. The single-human-stop rule and the no-commit
+  rule survive unchanged.
+- Host-portable text: 7-bit ASCII throughout (the pre-T20 file carried em
+  dashes and curly quotes) and plain relative paths replacing the
+  Claude-specific `@CLAUDE.md`/`@TODO.md` expansion syntax.
+
+Decisions recorded:
+- **The skill and the T15 bridge walk one path.**
+  `test_review_phase_runs_the_bridge_commands` joins the skill text against
+  `review.bridge.RECOVERY_INSTRUCTION`, pinning the same command literals
+  in both - a session following the skill and a session recovering from a
+  denied stop run identical commands, so neither can drift alone.
+- **Exit codes drive the loop, not status-line matching.** PHASE 4 branches
+  on `review/run.sh` exit codes (0/10/20); the reviewer-response
+  final-status lines stay available (T5 pinned them as ASCII literals) but
+  the skill does not depend on parsing them.
+- **The phase-stop literals changed shape (em dash to ` -- `).** Anything
+  matching the old em-dash `PHASE COMPLETE` literals must track the
+  shipped file; the repo itself has no such matcher (verified by sweep).
+
+Acceptance: the original criterion - a full task completes RED through
+REVIEW with no terminal switching and no copy-paste - is satisfied by
+composition: the skill's PHASE 4 commands are the same literals the T13
+orchestrator tests execute end to end (`--new` through `--resume
+--response-file` to exit 0/20), and the join test guarantees the skill
+invokes exactly that machinery from within the session.
+
+Hardened after review (two blockers, both reproduced red):
+- **The instructed commands now carry the task context.** A bare `--new`
+  reviewed under the CLI defaults (placeholder WIP message, no TODO ref,
+  "verification not run") - a norms-only review, not a judgment of the
+  implementation against the task. The skill's `--new` command now passes
+  `--todo-ref`, `--wip-message` (the PHASE 3 commit message), and
+  `--verify-output` (the saved `make verify` output); every `--resume`
+  re-supplies the message and freshly re-run verify evidence, since only
+  the task ref persists in review state. Evidence files live under
+  `.jeltz/review/`, the one in-repo path excluded from the packet's
+  untracked scan and diff hash, so saving them cannot dirty the tree
+  under review. `test_instructed_new_invocation_reaches_reviewer_with_
+  context` executes the skill's literal command against the scripted
+  backend and asserts the packet the reviewer received carries all three
+  values and none of the defaults.
+- **The final commit message survives review fixes.** PHASE 3 writes the
+  message before PHASE 4 may change code; the terminal summary previously
+  restated it, handing the human a message describing a pre-review tree.
+  Exit-10 remediation now ends by updating the message to cover the
+  review-driven fixes, the updated form is what the resume submits and
+  what the terminal summary presents, and the hard constraint reads:
+  produced once in PHASE 3, updated (never reissued) in PHASE 4.
+- **The message travels by file, never through shell syntax** (round-2
+  blocker). The first fix interpolated the commit message into a
+  double-quoted `--wip-message "..."` argument; double quotes do not stop
+  backtick or `$` expansion, and this repo's own commit messages carry
+  backticked commands. `review/run.py` gained `--wip-message-file`
+  (mutually exclusive with `--wip-message`; read verbatim; an unreadable
+  file exits 1 before contacting the reviewer), and both skill commands
+  use it, with the message saved under `.jeltz/review/` alongside the
+  other evidence. Pinned by CLI tests passing a hostile multiline message
+  (backticks, `$()`, `$VAR`, both quote kinds) asserting byte-for-byte
+  arrival in the packet, plus the skill-side executable test now routing
+  the same hostile message through the skill's literal command; a skill
+  test also asserts no inline `--wip-message` interpolation remains.
 
 ### Phase 4 - documentation
 

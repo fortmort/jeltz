@@ -895,3 +895,85 @@ def test_resume_after_acceptance_needs_no_response(
     code = run_main(monkeypatch, home, ["--resume", "--repo", str(dirty_repo)])
     assert code == 0
     assert read_state(dirty_repo)["round"] == 2
+
+
+HOSTILE_WIP_MESSAGE = (
+    "feat: wire the frobnicator\n"
+    "\n"
+    "Runs `make verify` and $(hooks) with \"$PATH\" and 'quotes' intact;\n"
+    "a commit message is arbitrary text and must never pass through shell\n"
+    "syntax on its way to the reviewer.\n"
+)
+
+
+def test_wip_message_file_preserves_hostile_content(
+    dirty_repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """--wip-message-file transports the message byte-for-byte.
+
+    A real commit message contains backticks, $(), $VAR, and quotes -
+    content a shell would expand or mangle if interpolated into a
+    command line (T20 review). The file path is the safe transport: the
+    packet must carry the exact bytes, with nothing executed on the way.
+    """
+    message = tmp_path / "wip-message.txt"
+    message.write_text(HOSTILE_WIP_MESSAGE)
+    home = install_fake_codex(tmp_path, [{"stdout": events(verdict_obj())}])
+    code = run_main(
+        monkeypatch,
+        home,
+        ["--new", "--repo", str(dirty_repo), "--wip-message-file", str(message)],
+    )
+    assert code == 0
+    packet = calls(home)[0]["argv"][-1]
+    assert HOSTILE_WIP_MESSAGE in packet, "message not preserved byte-for-byte"
+    assert "WIP under review" not in packet, "packet fell back to the default"
+    assert not (dirty_repo / "hooks").exists(), "message content had side effects"
+
+
+def test_wip_message_file_unreadable_fails(
+    dirty_repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """An unreadable message file exits 1 before contacting the reviewer."""
+    home = install_fake_codex(tmp_path, [])
+    code = run_main(
+        monkeypatch,
+        home,
+        [
+            "--new",
+            "--repo",
+            str(dirty_repo),
+            "--wip-message-file",
+            str(tmp_path / "absent.txt"),
+        ],
+    )
+    assert code == 1
+    assert "--wip-message-file" in capsys.readouterr().err
+    assert calls(home) == []
+    assert not state_path(dirty_repo).exists()
+
+
+def test_wip_message_flags_are_exclusive(
+    dirty_repo: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """--wip-message and --wip-message-file cannot be combined."""
+    with pytest.raises(SystemExit) as excinfo:
+        main(
+            [
+                "--new",
+                "--repo",
+                str(dirty_repo),
+                "--wip-message",
+                "inline",
+                "--wip-message-file",
+                "somewhere.txt",
+            ]
+        )
+    assert excinfo.value.code == 2
+    assert "not allowed with" in capsys.readouterr().err

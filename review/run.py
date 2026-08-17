@@ -86,10 +86,17 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="reviewer backend for --new (default codex)",
     )
     parser.add_argument("--repo", default=".", help="repository to review")
-    parser.add_argument(
+    wip = parser.add_mutually_exclusive_group()
+    wip.add_argument(
         "--wip-message",
         default="WIP under review",
         help="WIP message standing in for a commit message",
+    )
+    wip.add_argument(
+        "--wip-message-file",
+        help="file whose contents are the WIP message, byte-for-byte - the "
+        "safe transport for real commit messages, whose backticks, $(), and "
+        "quotes a shell would expand or mangle if passed inline",
     )
     parser.add_argument("--todo-ref", help="TODO item under review (Q1)")
     parser.add_argument(
@@ -310,6 +317,13 @@ def main(argv: list[str] | None = None) -> int:
         except OSError as exc:
             logger.error("cannot read --verify-output: %s", exc)
             return EXIT_FAILURE
+    wip_message = args.wip_message
+    if args.wip_message_file:
+        try:
+            wip_message = Path(args.wip_message_file).read_text()
+        except OSError as exc:
+            logger.error("cannot read --wip-message-file: %s", exc)
+            return EXIT_FAILURE
     adapter = _make_adapter(plan.backend, args.allow_api_billing)
     # Hashed before dispatch on purpose: if the developer edits the tree
     # mid-review, the recorded hash mismatches the tree and the T14 gate
@@ -320,7 +334,7 @@ def main(argv: list[str] | None = None) -> int:
         result = conduct_review(
             repo,
             adapter,
-            args.wip_message,
+            wip_message,
             todo_ref=plan.task_ref,
             verify_output=verify_output,
             mode=plan.mode,
