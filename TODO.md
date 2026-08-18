@@ -16,12 +16,13 @@ Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer, and all four can enforce the gate
 (the "only three" premise fell during T19 - see 3.5).
 
-Status: T1-T20 and T22 complete; next task is T23. T32-T37 (added
-2026-08-17 after T20's acceptance) are Phase 5 work and must land before
-Phase 6. T21 (documentation) was moved out of Phase 4 to the end of Phase 5
-on 2026-08-17: it documents installation, and installation is rewritten by
-T23 (uv), T27 (install.sh hardening), T33 (installer ships the engine), and
-T34 (installer wires the gate) - three of which do not exist yet at all.
+Status: T1-T20, T22, and T23 complete; next task is T24. T32-T38 (T32-T37
+added 2026-08-17 after T20's acceptance, T38 during T23) are Phase 5 work
+and must land before Phase 6. T21 (documentation) was moved out of Phase 4
+to the end of Phase 5 on 2026-08-17: it documents installation, and
+installation is rewritten by T23 (uv, now landed), T27 (install.sh
+hardening), T33 (installer ships the engine), and T34 (installer wires the
+gate) - three of which do not exist yet at all.
 
 ---
 
@@ -1811,7 +1812,10 @@ Hardened after review (one blocker, valid):
   substitutable so the old-pip path is testable at all. Pinned by a test
   driving a stub interpreter whose venv carries a pip that rejects
   `--group` exactly as 24.0 does - fully offline, and dropping the raise
-  step fails it.
+  step fails it. (Superseded one task later: T23 removed pip from the
+  Makefile entirely, so both the raise step and its stub-interpreter test
+  are gone. The mechanism they guarded no longer exists; the equivalent
+  guard is now T23's uv version floor.)
 - Recorded, not acted on: the reviewer's non-blocker about the
   fresh-provisioning test installing floating dependencies from a live
   index. Every `make test` already provisions from the network, so this
@@ -1830,26 +1834,112 @@ the other verification artifacts (it is fallout from any consumer whose
 test target installs its own project, not a jeltz quirk), and added to
 `.gitignore`.
 
-#### T23. Move provisioning from pip to uv
+#### T23. Move provisioning from pip to uv - DONE
 Goal: uv is the single installer for dev and CI use.
-- Makefile provisions with uv (venv creation and dependency sync from
-  pyproject.toml); commit the lockfile so installs are reproducible.
-- Keep the standard targets (`make lint/test/verify`) working unchanged
-  for callers; only the provisioning underneath changes.
-- Account for every tool the Makefile invokes: Python tooling (pytest,
-  pytest-cov, later ruff) is uv-provisioned from pyproject.toml;
-  `shellcheck` and `shfmt` are external Go/Haskell binaries no Python
-  package manager can provide, so they stay documented prerequisites -
-  and `make verify` must fail fast with a clear message naming any
-  missing one instead of a bare command-not-found.
-- Update README/bootstrap instructions; document the uv version floor
-  and the external prerequisites in one place.
-- License check for any new tooling per CLAUDE.md (uv itself is
-  MIT/Apache-2.0, install-time only, not a code dependency).
-Acceptance: a fresh checkout with uv plus the documented external
-binaries (shellcheck, shfmt) reaches a green `make verify`; every
-Python-ecosystem tool arrives via uv; no Makefile path invokes pip; a
-missing external prerequisite produces a named, actionable error.
+
+Delivered: `tools/preflight.sh` (the external-prerequisite gate), a Makefile
+rebuilt around `uv sync --locked --no-install-project` with a new `make lock`
+target and overridable tool paths, the committed `uv.lock`, and a README
+Development section. Contract pinned by 15 tests in
+`tests/test_provisioning.py`; two pip-era tests retired and T1's staleness
+test rewritten around the new mechanism.
+
+Behavior as specified in the original acceptance:
+- **No Makefile path invokes pip**, asserted over `venv`, `lock`, `test`,
+  and `verify`. The check runs against an UNPROVISIONED scratch tree: in a
+  checkout that is already current make prints no recipe at all, and a
+  recipe nobody printed proves nothing (the first draft of this test passed
+  vacuously for exactly that reason).
+- **Every Python-ecosystem tool arrives via uv, at the pinned version.** A
+  fresh checkout carrying only the Makefile, pyproject.toml, uv.lock, and
+  the two files the packaging metadata references provisions, and the
+  installed pytest / pytest-cov / jsonschema versions are compared against
+  the lockfile's pins - identical, not merely importable. That is what
+  committing the lock buys, so that is what the test asserts.
+- **A stale lockfile stops the build instead of being rewritten**, proven
+  offline: the scratch tree's pyproject.toml gains a dependency, `make venv`
+  fails, uv.lock is byte-identical afterwards, and the message names both
+  the file and `uv lock`.
+- **External prerequisites fail fast, by name, with a remedy** - each of uv,
+  shellcheck, and shfmt individually, and two missing at once reported in
+  one pass rather than one build at a time.
+- **The uv floor is enforced, not just documented:** a stub uv reporting
+  0.4.0 is refused with both the found and required versions, and a stub at
+  the floor is accepted and observed installing from the lockfile (the
+  positive control - without it, a check that rejected every uv would pass
+  the negative test). Both stubs are offline.
+- **Standard targets are unchanged for callers**: `make lint/test/verify`
+  keep their names, meaning, and gates (417 tests, 100% coverage on
+  `review/`); only the provisioning underneath changed.
+- **README documents the prerequisites and the floor in one place**, and the
+  test reads the floor out of `tools/preflight.sh` so documentation and
+  enforcement cannot drift apart silently.
+
+Decisions recorded:
+- **`uv sync --locked`, not plain `uv sync`.** Plain sync silently
+  re-resolves and REWRITES uv.lock when pyproject.toml moves ahead of it.
+  That is a tracked-file mutation, and the reviewer runs `make verify`
+  inside the T6 worktree where any tracked mutation fails the review (R7) -
+  so a developer who edited dependencies without re-locking would get a
+  bogus integrity failure instead of a clear "re-lock" message. `--locked`
+  refuses; `make lock` is the deliberate refresh path. Same reasoning
+  retires the T22 non-blocker about installing floating dependencies from a
+  live index: the pins now make a fresh provision reproducible.
+- **`--no-install-project`.** The distribution is metadata-only (T22
+  `packages = []`), so building jeltz during provisioning would install
+  nothing while writing `build/` and `*.egg-info/` into the tree - the exact
+  artifacts T22 had to allowlist in the integrity check. Not building them
+  is better than allowlisting them, and a test asserts the tree stays clean.
+  The allowlist entries stay: they exist for consumer repos whose own test
+  target installs their own project.
+- **The venv stamp is gone.** T1/T22 rebuilt a stamp file when the
+  dependency declaration changed, because pip was too slow to run every
+  time. An up-to-date `uv sync` costs ~20ms, so `test` now depends on an
+  unconditional `venv`: cheaper than the staleness bug it removes, and a
+  mechanism that cannot itself go stale.
+- **The uv floor is 0.8.1 - the version actually verified here** - and it is
+  checked at runtime. Older uv releases very likely work; none was
+  available to test, and T22's blocker was precisely a declared floor that
+  nothing verified. Documenting an unverifiable number would repeat it.
+- **Tool paths are Makefile variables** (`UV`, `SHELLCHECK`, `SHFMT`). They
+  exist so the prerequisite and version tests can point one tool at a stub
+  or a nonexistent path without rewriting PATH, which is what makes the
+  fail-fast behavior testable at all.
+- **The preflight is a script, not an inline recipe**, so jeltz's own
+  standard (shellcheck- and shfmt-clean shell) applies to it; `tools/*.sh`
+  joined `SH_SOURCES`.
+- License: uv is MIT/Apache-2.0, install-time tooling only and not a code
+  dependency, per CLAUDE.md.
+
+Hardened after review (no blockers; two of three non-blockers fixed):
+- **Each target now requires only the tools it runs.** The first cut made
+  `lint`, `venv`, and `test` all depend on one all-tools preflight, so
+  `make lint` failed without uv and `make venv` failed without shellcheck.
+  preflight.sh now takes the tools to check as arguments (defaulting to all
+  three when run bare), `verify` still asks for everything so one run names
+  every gap, and `lint`/`venv`/`lock` ask only for what they invoke. Pinned
+  by tests that fail against the old wiring. Note for T24: ruff is
+  uv-provisioned, so restoring lint's uv requirement is `lint:
+  preflight-shell venv`, not a preflight change - recorded in T24.
+- **The README test checks the join, not just the words.** It now asserts
+  the `## Development` section preflight.sh names actually exists, and that
+  each prerequisite carries an install command inside it. The assertions
+  passed on first run because the documentation was already correct, so
+  their teeth were confirmed by mutation: removing the section heading,
+  removing shfmt's install command, and unsetting the documented floor each
+  fail the test.
+- Recorded, not acted on: the two vacuous lint tests. Filed as T38 during
+  this task, and the reviewer independently agreed the deferral is right -
+  the defect predates T23 and none of its provisioning coverage rests on
+  those tests.
+
+Collateral, declared:
+- README.md was normalized to 7-bit ASCII (curly quotes, em dashes, and one
+  emoji rewritten as its `\u2728` escape). Not cosmetic preference: the
+  installed 7bit hook enforces whole-file ASCII, so the file could not be
+  edited to add the Development section without it.
+- Removed the leftover `build/` and `jeltz.egg-info/` directories left by
+  T22's pip installs. Nothing creates them now.
 
 #### T24. Full ruff rules in pyproject.toml + Makefile lint
 Goal: the repo's own standard becomes the full ruff rule set; the
@@ -1872,6 +1962,16 @@ keeps its narrow rules on purpose to avoid red/green/refactor thrash).
   `ruff format --check`) alongside the existing shellcheck/shfmt; update
   the Makefile header comment that currently documents the deliberate
   absence of a tracked ruff config.
+- **Re-couple lint to provisioning while doing it.** T23 narrowed each
+  target to the external tools it actually invokes, so `lint` currently
+  depends on `preflight-shell` alone. ruff is uv-provisioned like the rest
+  of the Python tooling, so it arrives through the venv, not the preflight:
+  the edit is `lint: preflight-shell venv`, which restores the uv
+  requirement transitively (`venv: preflight-uv`). The preflight itself
+  does not change - it gates only what uv cannot install.
+  `tests/test_provisioning.py::test_lint_does_not_require_the_python_provisioner`
+  encodes today's truth and is the tripwire for this; it is EXPECTED to
+  fail here and must be updated to assert the new scope, not deleted.
 - Do NOT touch the abbreviated rule list inside the shipped ruff.sh
   hook - that is consumer-facing phase tooling, not the repo standard.
 Acceptance: `make verify` green with the full rule set enforced;
@@ -2037,8 +2137,8 @@ the ENTIRE suite recursively inside `make test` (bounded to one level by
 the main cause; the recursion is, and the T23 uv move alone will not fix
 it.
 - Fix the recursion: the self-referential `make test` check should
-  prove wiring (make invokes pytest with the coverage gate and a fresh
-  stamp), not re-execute every test - e.g. bound the inner run to a
+  prove wiring (make provisions, then invokes pytest with the coverage
+  gate), not re-execute every test - e.g. bound the inner run to a
   cheap subset via a make/pytest variable while keeping the outer gates
   intact, or assert on `-n` dry-run output plus a minimal real run.
 - Record the before/after wall-clock numbers in this entry, plus a full
@@ -2097,11 +2197,38 @@ profile exists.
 - Take the top entry of T35's durations profile, attribute its cost
   (expected suspects: subprocess-heavy adapter, worktree, or
   makefile-fixture setup), and apply one fix - e.g. share the expensive
-  fixture where isolation permits, replace in-test pip provisioning with
-  T23's cached uv sync, or batch redundant subprocess spawns.
+  fixture where isolation permits, or batch redundant subprocess spawns.
+  (In-test pip provisioning is already gone: T23 replaced it with a cached
+  uv sync, which cut the provisioning tests from ~130s to ~3s.)
 - Gates intact: 100% coverage, 100% pass; no test deleted or weakened.
 Acceptance: the targeted cause's before/after numbers recorded here and
 the top profile entry's cost materially reduced; `make verify` green.
+
+#### T38. The lint-failure tests are vacuous (found during T23)
+Goal: `make lint` is proven to catch broken shell, not merely proven to
+exit non-zero.
+- Evidence (2026-08-18): `tests/test_makefile.py`'s `lint_tree` fixture
+  copies only the Makefile and `hooks/` into a scratch tree, but
+  `SH_SOURCES` also names `install.sh` (and now `tools/*.sh`), so
+  shellcheck dies with `install.sh: openBinaryFile: does not exist`
+  before it ever reads the deliberately broken file. Both
+  `test_make_lint_fails_on_shellcheck_violation` and
+  `test_make_lint_fails_on_formatting_violation` therefore assert
+  `returncode != 0` against a failure that has nothing to do with the
+  violation they inject. Reproduced directly: the same tree lints
+  non-zero with the injected file removed.
+- Fix the fixture so the scratch tree carries every path `SH_SOURCES`
+  resolves, then re-run both tests with the injected violation removed
+  and confirm they now PASS (they must fail only because of the
+  violation). A fixture that silently drops a source is the same defect
+  in a new place, so derive what to copy rather than listing it.
+- While there, check the sibling scratch-tree fixtures for the same
+  class of vacuous pass.
+Left for its own task rather than fixed inside T23: T23 changed what the
+Makefile provisions, not what lint covers, and this predates it (the gap
+opened when install.sh joined SH_SOURCES in T2).
+Acceptance: with the injected violation removed each test fails, with it
+present each passes for the stated reason; `make verify` green.
 
 #### T21. Install and configuration documentation (moved from Phase 4)
 - README section on the review loop and installing the gate, per host and
@@ -2132,7 +2259,7 @@ topics (T28-T30), each reorganized for a reader who never saw the
 TODOs - by topic, not by task number, keeping task-numbered acceptance
 evidence only where it documents a verified-against version. These run
 late deliberately: content is only stable once every Phase 5 task lands
-(T21-T27 and T32-T37).
+(T21-T27 and T32-T38).
 
 #### T28. docs/: architecture and decision log
 - Extract the problem statement (section 1), the decision log D1-D6

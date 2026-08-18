@@ -13,34 +13,13 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import run_make
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Guard variable bounding the self-referential ``make test`` check to a
 # single level of recursion.
 _INNER_RUN_ENV = "JELTZ_MAKE_TEST_INNER"
-
-
-def _run_make(
-    target: str, cwd: Path, *, dry_run: bool = False, env: dict[str, str] | None = None
-) -> subprocess.CompletedProcess[str]:
-    """Run ``make <target>`` and capture its output.
-
-    Args:
-        target: The make target to invoke.
-        cwd: Directory to run make in.
-        dry_run: When True, pass ``-n`` so make prints commands without
-            executing them.
-        env: Extra environment variables layered over the current environment.
-
-    Returns:
-        The completed process with stdout and stderr captured as text.
-    """
-    cmd = ["make"]
-    if dry_run:
-        cmd.append("-n")
-    cmd.append(target)
-    full_env = {**os.environ, **(env or {})}
-    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, env=full_env)
 
 
 @pytest.fixture()
@@ -58,7 +37,7 @@ def lint_tree(tmp_path: Path) -> Path:
 
 def test_make_lint_passes_on_clean_checkout() -> None:
     """``make lint`` exits 0 against the repo's own shell sources."""
-    result = _run_make("lint", REPO_ROOT)
+    result = run_make("lint", REPO_ROOT)
     assert result.returncode == 0, (
         f"make lint failed on a clean checkout:\n{result.stdout}\n{result.stderr}"
     )
@@ -68,7 +47,7 @@ def test_make_lint_fails_on_shellcheck_violation(lint_tree: Path) -> None:
     """A script with a shellcheck finding makes ``make lint`` fail."""
     bad = lint_tree / "hooks" / "broken.sh"
     bad.write_text("#!/bin/bash\necho $undefined_and_unquoted\n")
-    result = _run_make("lint", lint_tree)
+    result = run_make("lint", lint_tree)
     assert result.returncode != 0, (
         "make lint passed despite a shellcheck violation in hooks/broken.sh"
     )
@@ -78,7 +57,7 @@ def test_make_lint_fails_on_formatting_violation(lint_tree: Path) -> None:
     """A shellcheck-clean but misformatted script makes ``make lint`` fail."""
     bad = lint_tree / "hooks" / "misformatted.sh"
     bad.write_text('#!/bin/bash\nif true; then\n  echo "two-space indent"\nfi\n')
-    result = _run_make("lint", lint_tree)
+    result = run_make("lint", lint_tree)
     assert result.returncode != 0, (
         "make lint passed despite a formatting violation in hooks/misformatted.sh"
     )
@@ -86,7 +65,7 @@ def test_make_lint_fails_on_formatting_violation(lint_tree: Path) -> None:
 
 def test_make_test_invokes_pytest() -> None:
     """The ``test`` target delegates to pytest over the tests directory."""
-    result = _run_make("test", REPO_ROOT, dry_run=True)
+    result = run_make("test", REPO_ROOT, dry_run=True)
     assert result.returncode == 0, (
         f"make -n test failed:\n{result.stdout}\n{result.stderr}"
     )
@@ -97,7 +76,7 @@ def test_make_test_invokes_pytest() -> None:
 
 def test_make_verify_aggregates_lint_and_test() -> None:
     """``make verify`` runs the lint and test targets as one step."""
-    result = _run_make("verify", REPO_ROOT, dry_run=True)
+    result = run_make("verify", REPO_ROOT, dry_run=True)
     assert result.returncode == 0, (
         f"make -n verify failed:\n{result.stdout}\n{result.stderr}"
     )
@@ -109,29 +88,24 @@ def test_make_verify_aggregates_lint_and_test() -> None:
     )
 
 
-def test_dependency_changes_reinstall_before_tests() -> None:
-    """Editing the tracked dependency declaration retriggers installation.
+def test_tests_never_run_against_a_stale_environment() -> None:
+    """``make test`` provisions before it invokes pytest, every time.
 
-    A checkout whose .venv predates a dependency change must install the new
-    dependencies on the next ``make test`` instead of failing at import time,
-    so the test target has to depend on the file that declares them - since
-    T22 that is pyproject.toml, the single packaging file.
+    A checkout whose .venv predates a dependency change must not run the
+    suite against it and report a green build. T1 solved that with a stamp
+    file rebuilt when the dependency declaration changed; T23 replaced the
+    stamp with an unconditional uv sync, which is cheaper than the staleness
+    bug it removes and cannot go stale itself.
     """
-    declaration = REPO_ROOT / "pyproject.toml"
-    assert declaration.is_file(), "no tracked dependency declaration to install from"
-    before = declaration.stat()
-    try:
-        os.utime(declaration)
-        result = _run_make("test", REPO_ROOT, dry_run=True)
-    finally:
-        # Restore the original mtime so the real venv stamp stays fresh and
-        # later make runs do not pay a needless reinstall.
-        os.utime(declaration, (before.st_atime, before.st_mtime))
+    result = run_make("test", REPO_ROOT, dry_run=True)
     assert result.returncode == 0, (
         f"make -n test failed:\n{result.stdout}\n{result.stderr}"
     )
-    assert "pip install" in result.stdout, (
-        f"a changed dependency declaration does not reinstall:\n{result.stdout}"
+    assert "sync" in result.stdout, (
+        f"make test runs pytest without provisioning first:\n{result.stdout}"
+    )
+    assert result.stdout.index("sync") < result.stdout.index("pytest"), (
+        f"provisioning runs after the tests it provisions for:\n{result.stdout}"
     )
     assert "requirements-dev" not in result.stdout, (
         f"provisioning still reads the retired requirements file:\n{result.stdout}"
@@ -147,7 +121,7 @@ def test_make_test_passes_on_clean_checkout() -> None:
     """
     if os.environ.get(_INNER_RUN_ENV):
         pytest.skip("inner make test run; recursion bounded to one level")
-    result = _run_make("test", REPO_ROOT, env={_INNER_RUN_ENV: "1"})
+    result = run_make("test", REPO_ROOT, env={_INNER_RUN_ENV: "1"})
     assert result.returncode == 0, (
         f"make test failed on a clean checkout:\n{result.stdout}\n{result.stderr}"
     )

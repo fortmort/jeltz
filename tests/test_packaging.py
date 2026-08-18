@@ -9,6 +9,9 @@ The packaging file must not carry a ``[tool.ruff]`` section yet. A TRACKED
 ruff config flips hooks/lib/repo-mode.sh to whole-file (strict) enforcement
 for this entire tree, so config and full-rules compliance land together in
 T24 rather than arriving as a packaging side effect.
+
+What this file does NOT cover: how the declared dependencies get installed.
+That moved to tests/test_provisioning.py when T23 replaced pip with uv.
 """
 
 import re
@@ -156,124 +159,4 @@ def test_requirements_dev_txt_is_retired() -> None:
     """Dependencies are declared in one file, not two."""
     assert not (REPO_ROOT / "requirements-dev.txt").exists(), (
         "requirements-dev.txt still exists alongside pyproject.toml"
-    )
-
-
-def _stub_interpreter(root: Path, log: Path) -> Path:
-    """Write a stub python3 whose venvs carry a pre-25.1 pip.
-
-    The stub pip refuses ``--group`` the way pip 24.0 does - CPython 3.11,
-    this project's declared floor, bundles exactly that - and accepts it only
-    after something has raised it past the dependency-group floor.
-
-    Args:
-        root: Directory to write the stub scripts into.
-        log: File the stub pip appends each of its invocations to.
-
-    Returns:
-        Path to the executable stub interpreter.
-    """
-    generation = root / "pip-generation"
-    pip = root / "stub-pip"
-    pip.write_text(
-        f'''#!/bin/sh
-set -eu
-echo "$@" >> "{log}"
-case "$*" in
-    *"pip>="*)
-        echo new > "{generation}"
-        ;;
-    *--group*)
-        if [ "$(cat "{generation}")" = old ]; then
-            echo "no such option: --group" >&2
-            exit 2
-        fi
-        ;;
-esac
-exit 0
-'''
-    )
-    pip.chmod(0o755)
-
-    python = root / "stub-python3"
-    python.write_text(
-        f'''#!/bin/sh
-set -eu
-if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then
-    mkdir -p "$3/bin"
-    cp "{pip}" "$3/bin/pip"
-    chmod +x "$3/bin/pip"
-    echo old > "{generation}"
-fi
-exit 0
-'''
-    )
-    python.chmod(0o755)
-    return python
-
-
-def test_provisioning_survives_a_bundled_pip_without_group_support(
-    tmp_path: Path,
-) -> None:
-    """Provisioning works on an interpreter whose bundled pip is too old.
-
-    ``python -m venv`` seeds the interpreter's own bundled pip, and PEP 735
-    dependency groups need pip >= 25.1 - newer than CPython 3.11 bundles.
-    A fresh checkout on the declared Python floor must still provision, so
-    the venv's pip cannot be assumed new enough to install the dev group.
-    """
-    tree = tmp_path / "checkout"
-    tree.mkdir()
-    shutil.copy(REPO_ROOT / "Makefile", tree / "Makefile")
-    shutil.copy(PYPROJECT, tree / "pyproject.toml")
-    log = tmp_path / "pip-calls.log"
-    python = _stub_interpreter(tmp_path, log)
-
-    result = subprocess.run(
-        ["make", "venv", f"PYTHON={python}"],
-        cwd=tree,
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, (
-        f"provisioning failed against a pre-25.1 pip:\n{result.stdout}\n{result.stderr}"
-    )
-    calls = log.read_text().splitlines() if log.exists() else []
-    assert calls, "the Makefile never ran the stub interpreter's pip"
-    assert any("--group" in call for call in calls), (
-        f"the dev group was never installed:\n{calls}"
-    )
-
-
-def test_make_venv_provisions_from_pyproject_alone(tmp_path: Path) -> None:
-    """A fresh checkout provisions every dependency from pyproject.toml.
-
-    The scratch tree carries the packaging file, the files it references, and
-    the Makefile - and nothing else. A provisioning step that still needed
-    requirements-dev.txt, or that skipped either audience's dependencies,
-    fails here rather than in a contributor's first clone.
-    """
-    tree = tmp_path / "checkout"
-    tree.mkdir()
-    shutil.copy(REPO_ROOT / "Makefile", tree / "Makefile")
-    shutil.copy(PYPROJECT, tree / "pyproject.toml")
-    for referenced in ("README.md", "LICENSE.md"):
-        shutil.copy(REPO_ROOT / referenced, tree / referenced)
-
-    result = subprocess.run(["make", "venv"], cwd=tree, capture_output=True, text=True)
-    assert result.returncode == 0, (
-        f"make venv failed on a fresh checkout:\n{result.stdout}\n{result.stderr}"
-    )
-
-    imported = subprocess.run(
-        [
-            str(tree / ".venv" / "bin" / "python"),
-            "-c",
-            "import jsonschema, pytest, pytest_cov",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert imported.returncode == 0, (
-        f"provisioned venv is missing declared dependencies:\n{imported.stderr}"
     )
