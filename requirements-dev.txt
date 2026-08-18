@@ -1,5 +1,0 @@
-# Test-suite dependencies for the jeltz repo itself. All MIT/permissive.
-# make test depends on this file: editing it retriggers the install.
-jsonschema
-pytest
-pytest-cov

@@ -1,0 +1,43 @@
+# Packaging baseline for jeltz (T22). One declarative file for dependencies,
+# split by audience:
+#
+#   [project].dependencies  - needed to RUN the shipped review engine, in this
+#                             checkout or in a consumer repo that installed it
+#                             (T33). These are what a consumer provisions.
+#   [dependency-groups].dev - needed to DEVELOP jeltz itself. PEP 735 groups
+#                             are not part of the distribution metadata, so a
+#                             consumer can never pull them by accident.
+#
+# jeltz ships by file copy (install.sh), never as a wheel of its own code, so
+# the build backend is here only to make the dependency metadata installable:
+# `packages = []` keeps the built distribution metadata-only. That also avoids
+# putting a top-level module named `review` into anyone's site-packages.
+#
+# Deliberately NO [tool.ruff] section: hooks/lib/repo-mode.sh derives strict
+# whole-file enforcement from a git-TRACKED ruff config, so that section lands
+# with T24's full-rules compliance, not as a packaging side effect.
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jeltz"
+version = "0.1.0"
+description = "Hooks, skills, and the in-session review loop shipped into consumer projects"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE.md"]
+dependencies = [
+    "jsonschema>=4.23",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+]
+
+[tool.setuptools]
+packages = []

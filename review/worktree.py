@@ -35,6 +35,11 @@ CACHE_ALLOWLIST: tuple[str, ...] = (
     ".coverage",
     ".coverage.*",
     "htmlcov/*",
+    # Build metadata from a test target that installs the project itself
+    # (jeltz's own does, since T22). Listed both ways because git reports an
+    # ignored directory as a directory and an unignored one file by file.
+    "*.egg-info",
+    "*.egg-info/*",
 )
 
 _UNTRACKED_CODES = ("??", "!!")

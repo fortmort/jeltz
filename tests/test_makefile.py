@@ -110,32 +110,31 @@ def test_make_verify_aggregates_lint_and_test() -> None:
 
 
 def test_dependency_changes_reinstall_before_tests() -> None:
-    """Editing the tracked dependency list retriggers installation.
+    """Editing the tracked dependency declaration retriggers installation.
 
-    T4 added jsonschema and pytest-cov to the venv. A checkout still
-    carrying T1's pytest-only .venv must install the new dependencies on
-    the next ``make test`` instead of failing at import time, so the test
-    target has to depend on the tracked dependency list, not merely on the
-    venv existing.
+    A checkout whose .venv predates a dependency change must install the new
+    dependencies on the next ``make test`` instead of failing at import time,
+    so the test target has to depend on the file that declares them - since
+    T22 that is pyproject.toml, the single packaging file.
     """
-    requirements = REPO_ROOT / "requirements-dev.txt"
-    assert requirements.is_file(), "no tracked dependency list to install from"
-    before = requirements.stat()
+    declaration = REPO_ROOT / "pyproject.toml"
+    assert declaration.is_file(), "no tracked dependency declaration to install from"
+    before = declaration.stat()
     try:
-        os.utime(requirements)
+        os.utime(declaration)
         result = _run_make("test", REPO_ROOT, dry_run=True)
     finally:
         # Restore the original mtime so the real venv stamp stays fresh and
         # later make runs do not pay a needless reinstall.
-        os.utime(requirements, (before.st_atime, before.st_mtime))
+        os.utime(declaration, (before.st_atime, before.st_mtime))
     assert result.returncode == 0, (
         f"make -n test failed:\n{result.stdout}\n{result.stderr}"
     )
     assert "pip install" in result.stdout, (
-        f"a changed dependency list does not reinstall:\n{result.stdout}"
+        f"a changed dependency declaration does not reinstall:\n{result.stdout}"
     )
-    assert "requirements-dev.txt" in result.stdout, (
-        f"install does not read the tracked list:\n{result.stdout}"
+    assert "requirements-dev" not in result.stdout, (
+        f"provisioning still reads the retired requirements file:\n{result.stdout}"
     )
 
 

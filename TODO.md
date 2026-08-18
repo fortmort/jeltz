@@ -16,8 +16,12 @@ Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer, and all four can enforce the gate
 (the "only three" premise fell during T19 - see 3.5).
 
-Status: T1-T20 complete; next task is T21. T32-T37 (added 2026-08-17
-after T20's acceptance) are Phase 5 work and must land before Phase 6.
+Status: T1-T20 and T22 complete; next task is T23. T32-T37 (added
+2026-08-17 after T20's acceptance) are Phase 5 work and must land before
+Phase 6. T21 (documentation) was moved out of Phase 4 to the end of Phase 5
+on 2026-08-17: it documents installation, and installation is rewritten by
+T23 (uv), T27 (install.sh hardening), T33 (installer ships the engine), and
+T34 (installer wires the gate) - three of which do not exist yet at all.
 
 ---
 
@@ -651,12 +655,15 @@ Repo decisions recorded:
   100% line-coverage gate (`pytest-cov`, `--cov-fail-under=100` in
   `make test`); shell keeps the behavioral-pytest standard.
 - New venv deps: `jsonschema` and `pytest-cov` plus transitives, all
-  MIT/permissive. Dependencies live in a tracked `requirements-dev.txt`
-  and `make test` depends on it through a venv stamp (added after
-  review), so editing the list reinstalls into an existing venv instead
-  of leaving checkouts with T1's pytest-only venv failing at import.
+  MIT/permissive. Dependencies live in a tracked list and `make test`
+  depends on it through a venv stamp (added after review), so editing the
+  list reinstalls into an existing venv instead of leaving checkouts with
+  T1's pytest-only venv failing at import. (The list was
+  `requirements-dev.txt` until T22 replaced it with `pyproject.toml`.)
 - Root `conftest.py` puts the repo root on `sys.path` so shipped Python
-  modules import without packaging metadata (which T1 deliberately avoids).
+  modules import without packaging metadata (which T1 deliberately avoids;
+  T22's pyproject.toml is metadata-only and installs no jeltz code, so this
+  still holds).
 
 #### T5. Update `reviewer-response/SKILL.md` - DONE
 Goal: make the fixer's output a machine-joinable half of the review loop.
@@ -1741,36 +1748,87 @@ Hardened after review (two blockers, both reproduced red):
   the same hostile message through the skill's literal command; a skill
   test also asserts no inline `--wip-message` interpolation remains.
 
-### Phase 4 - documentation
-
-#### T21. Install and configuration documentation
-- README section on the review loop and installing the gate, per host and
-  scope.
-- Config reference: backend, model, max rounds, size ceiling, opt-out.
-- Record how to re-verify section 3 (section 8) and against which versions.
-
 ### Phase 5 - packaging, tooling, and hardening
 
-#### T22. Packaging baseline: pyproject.toml with split dependencies
+#### T22. Packaging baseline: pyproject.toml with split dependencies - DONE
 Goal: one declarative packaging file; requirements-dev.txt retired.
-- Add `pyproject.toml` with project metadata and dependencies split by
-  audience: production dependencies for running the shipped code
-  (`jsonschema` - `review/verdict.py` imports it at runtime in consumer
-  contexts, so it is NOT a dev dependency despite living in
-  requirements-dev.txt today) and a dev group for developing jeltz
-  itself (`pytest`, `pytest-cov`; `ruff` joins this group in T24, the
-  task that lands its config).
-- Point the Makefile's venv provisioning at pyproject.toml (still pip in
-  this task; the uv swap is T23) and delete requirements-dev.txt,
-  including the stamp dependency comment logic that references it.
-- Deliberately NO `[tool.ruff]` section in this task:
-  `hooks/lib/repo-mode.sh` derives strict mode from a git-TRACKED ruff
-  config, so the flip must land together with full-rules compliance
-  (T24), not as a packaging side effect (the exact hazard the T1 note in
-  the Makefile records).
-Acceptance: a fresh checkout provisions and passes `make verify` from
-pyproject.toml alone; requirements-dev.txt is gone; repo-mode detection
-still resolves jeltz to non-strict.
+
+Delivered: `pyproject.toml` (project metadata, production dependencies,
+PEP 735 dev dependency group, metadata-only build config); the Makefile
+provisions its venv stamp from it with `pip install . --group dev` behind
+a new `make venv` target; `requirements-dev.txt` deleted. Contract pinned
+by 7 tests in `tests/test_packaging.py` plus the rewritten dependency-change
+test in `tests/test_makefile.py`.
+
+Behavior as specified in the original acceptance:
+- **Dependencies split by audience.** `[project].dependencies` carries
+  `jsonschema` - `review/verdict.py` imports it at module scope, and T33
+  ships that module into consumer repos that never install jeltz's test
+  tooling, so it is production, not dev. `[dependency-groups].dev` carries
+  `pytest` and `pytest-cov` (`ruff` joins in T24). Tests assert both
+  directions: nothing dev leaks into production and jsonschema is not
+  demoted to dev.
+- **Fresh-checkout provisioning from pyproject.toml alone**, proven by a
+  test that provisions a venv in a scratch tree holding only the Makefile,
+  the packaging file, and the two files it references - no
+  requirements-dev.txt anywhere - then imports all three dependencies.
+- **No `[tool.ruff]` section**, asserted directly and, more usefully, by a
+  test that commits this exact pyproject.toml into a scratch git repo and
+  asserts `hook_repo_mode` still answers `diff`. That is the acceptance
+  criterion the T1 note warned about, now mechanically pinned rather than
+  described.
+
+Decisions recorded:
+- **PEP 735 dependency groups, not extras, for dev tooling.** Groups are
+  absent from distribution metadata, so a consumer provisioning jeltz's
+  production dependencies (T33) structurally cannot pull pytest; an extra
+  could be requested by name. pip 26.1 and uv both support `--group`, so
+  T23's swap needs no re-modelling. Requires pip >= 25.1.
+- **The distribution is metadata-only** (`[tool.setuptools] packages = []`).
+  jeltz ships by file copy (install.sh), never as a wheel of its own code,
+  so the build backend exists only to make the dependency metadata
+  installable. This keeps T1's arrangement intact (root `conftest.py` puts
+  the working tree on `sys.path`; nothing installed can shadow it) and
+  avoids putting a top-level module named `review` - a very collidable name
+  - into a consumer's site-packages.
+- **`make venv` is a named target**, so provisioning is invokable and
+  testable on its own rather than only as a side effect of `make test`;
+  T23 changes what it runs, not what callers invoke.
+- Version `0.1.0`, matching the existing `v0.1.0` tag; license declared as
+  MIT with `license-files` (the repo's LICENSE.md), per CLAUDE.md's
+  permissive requirement.
+
+Hardened after review (one blocker, valid):
+- **Provisioning no longer assumes a new enough pip.** `python -m venv`
+  seeds the interpreter's BUNDLED pip, and `--group` needs pip >= 25.1
+  while CPython 3.11 - the floor this task declares - bundles 24.0. A fresh
+  checkout on any interpreter older than the development machine's would
+  have died with `no such option: --group`, defeating this task's own
+  acceptance criterion; the provisioning test could not see it because it
+  used the ambient python3 (3.14, pip 26.1.2). The stamp recipe now raises
+  the venv's pip past the dependency-group floor before installing (a no-op
+  when already satisfied), and `PYTHON ?= python3` makes the interpreter
+  substitutable so the old-pip path is testable at all. Pinned by a test
+  driving a stub interpreter whose venv carries a pip that rejects
+  `--group` exactly as 24.0 does - fully offline, and dropping the raise
+  step fails it.
+- Recorded, not acted on: the reviewer's non-blocker about the
+  fresh-provisioning test installing floating dependencies from a live
+  index. Every `make test` already provisions from the network, so this
+  adds no new class of dependency, and T23 commits a lockfile - the durable
+  determinism fix, one task away. A pip-side constraint file built now
+  would be deleted there.
+
+Fallout found and fixed in-task (test-first, like any other change):
+`pip install .` makes setuptools write a `*.egg-info/` directory into the
+tree it builds from. That is a novel untracked write, so the T6 integrity
+check failed it as reviewer tampering (`IntegrityError`) - meaning every
+review of this repo would have failed operationally the moment a reviewer
+ran `make verify` in the disposable worktree. Reproduced by a new test in
+`tests/test_worktree.py`, then allowlisted in `CACHE_ALLOWLIST` alongside
+the other verification artifacts (it is fallout from any consumer whose
+test target installs its own project, not a jeltz quirk), and added to
+`.gitignore`.
 
 #### T23. Move provisioning from pip to uv
 Goal: uv is the single installer for dev and CI use.
@@ -2045,6 +2103,24 @@ profile exists.
 Acceptance: the targeted cause's before/after numbers recorded here and
 the top profile entry's cost materially reduced; `make verify` green.
 
+#### T21. Install and configuration documentation (moved from Phase 4)
+- README section on the review loop and installing the gate, per host and
+  scope.
+- Config reference: backend, model, max rounds, size ceiling, opt-out.
+- Record how to re-verify section 3 (section 8) and against which versions.
+
+Moved here on 2026-08-17, before Phase 6 and after every task that changes
+installation. It documents how to install and configure the system, and
+that procedure does not exist yet in its final form: T33 is what makes the
+engine installable at all, T34 is what installs the per-host gate wiring
+(the second bullet's subject), T23 changes how dependencies are
+provisioned, and T27 rewrites install.sh's copy/refusal behavior. Written
+in Phase 4 it would have documented a procedure no code performs, then been
+rewritten four times. It stays a Phase 5 task rather than folding into
+T28-T30 because it is user-facing README/config documentation, not the
+branch-history extraction those tasks perform - and Phase 6 begins by
+assuming the shipped documentation is already correct.
+
 ### Phase 6 - branch closeout
 
 TODO.md is the working spec for this feature branch only; the squash
@@ -2055,7 +2131,8 @@ removed. The extraction is split into bounded, conversation-sized
 topics (T28-T30), each reorganized for a reader who never saw the
 TODOs - by topic, not by task number, keeping task-numbered acceptance
 evidence only where it documents a verified-against version. These run
-late deliberately: content is only stable once T12-T27 land.
+late deliberately: content is only stable once every Phase 5 task lands
+(T21-T27 and T32-T37).
 
 #### T28. docs/: architecture and decision log
 - Extract the problem statement (section 1), the decision log D1-D6

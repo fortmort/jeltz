@@ -158,6 +158,23 @@ def test_cache_writes_are_allowlisted(dirty_repo: Path) -> None:
         verify_integrity(worktree, before)
 
 
+def test_packaging_metadata_writes_are_allowlisted(dirty_repo: Path) -> None:
+    """Build metadata from a verify run is an artifact, not a mutation.
+
+    A project whose test target installs itself (jeltz itself does, since
+    T22: ``pip install . --group dev``) makes setuptools write an .egg-info
+    directory into the tree it builds from. A reviewer running ``make
+    verify`` in the checkout must not fail integrity for that.
+    """
+    with review_worktree(dirty_repo, "wip: verify run") as worktree:
+        before = snapshot(worktree)
+        egg_info = worktree / "consumer.egg-info"
+        egg_info.mkdir()
+        (egg_info / "PKG-INFO").write_text("Metadata-Version: 2.4\n")
+        (egg_info / "SOURCES.txt").write_text("pyproject.toml\n")
+        verify_integrity(worktree, before)
+
+
 def test_tracked_edit_fails_the_review(dirty_repo: Path) -> None:
     """R7: a reviewer edit to tracked source fails the review by name."""
     with review_worktree(dirty_repo, "wip: tamper") as worktree:
