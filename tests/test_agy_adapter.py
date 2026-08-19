@@ -146,9 +146,7 @@ def test_fresh_review_runs_print_json_with_schema_and_project(
     assert call["schema"] == load_schema()
 
 
-def test_fresh_review_invokes_the_installed_skill(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_fresh_review_invokes_the_installed_skill(dirty_repo: Path, tmp_path: Path) -> None:
     """The prompt is the slash-command skill invocation plus the packet."""
     home = install_fake_agy(tmp_path, [{"stdout": envelope(fenced_verdict())}])
     conduct_review(dirty_repo, adapter_for(home), "wip: skill framing", todo_ref="T9")
@@ -161,9 +159,7 @@ def test_fresh_review_invokes_the_installed_skill(
     assert "T9" in prompt
 
 
-def test_review_runs_inside_the_disposable_worktree(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_review_runs_inside_the_disposable_worktree(dirty_repo: Path, tmp_path: Path) -> None:
     """agy works in the T6 checkout, never the developer's tree."""
     home = install_fake_agy(tmp_path, [{"stdout": envelope(fenced_verdict())}])
     conduct_review(dirty_repo, adapter_for(home), "wip: worktree cwd")
@@ -176,13 +172,7 @@ def test_resume_reuses_the_prior_conversation(dirty_repo: Path, tmp_path: Path) 
     """D1: a re-review is --conversation <id>, not a fresh project."""
     home = install_fake_agy(
         tmp_path,
-        [
-            {
-                "stdout": envelope(
-                    fenced_verdict(round_number=2), conversation="conv-prior"
-                )
-            }
-        ],
+        [{"stdout": envelope(fenced_verdict(round_number=2), conversation="conv-prior")}],
     )
     result = conduct_review(
         dirty_repo,
@@ -199,9 +189,7 @@ def test_resume_reuses_the_prior_conversation(dirty_repo: Path, tmp_path: Path) 
     assert not argv[argv.index("-p") + 1].startswith("/skeptical-reviewer")
 
 
-def test_fenced_response_reaches_the_parser_verbatim(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_fenced_response_reaches_the_parser_verbatim(dirty_repo: Path, tmp_path: Path) -> None:
     """agy fences verdict JSON itself (T4 probe): no normalization."""
     response = f"The work is sound.\n\n{fenced_verdict()}"
     home = install_fake_agy(tmp_path, [{"stdout": envelope(response)}])
@@ -220,13 +208,9 @@ def test_empty_response_is_a_loud_typed_error(dirty_repo: Path, tmp_path: Path) 
         conduct_review(dirty_repo, adapter_for(home), "wip: silent denial")
 
 
-def test_missing_response_key_is_a_loud_typed_error(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_missing_response_key_is_a_loud_typed_error(dirty_repo: Path, tmp_path: Path) -> None:
     """agy omits empty JSON keys, so a denied run can lack `response`."""
-    home = install_fake_agy(
-        tmp_path, [{"stdout": envelope(None), "stderr": DENIAL_NOTE}]
-    )
+    home = install_fake_agy(tmp_path, [{"stdout": envelope(None), "stderr": DENIAL_NOTE}])
     with pytest.raises(AdapterProcessError, match="auto-denied"):
         conduct_review(dirty_repo, adapter_for(home), "wip: dropped key")
 
@@ -241,22 +225,16 @@ def test_non_success_status_is_a_typed_error(dirty_repo: Path, tmp_path: Path) -
         conduct_review(dirty_repo, adapter_for(home), "wip: failed status")
 
 
-def test_unparseable_envelope_is_a_typed_error(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_unparseable_envelope_is_a_typed_error(dirty_repo: Path, tmp_path: Path) -> None:
     """Stdout that is not a JSON envelope is a transport failure."""
     home = install_fake_agy(tmp_path, [{"stdout": "not an envelope\n"}])
     with pytest.raises(AdapterProcessError):
         conduct_review(dirty_repo, adapter_for(home), "wip: broken envelope")
 
 
-def test_backend_nonzero_exit_is_a_typed_error(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_backend_nonzero_exit_is_a_typed_error(dirty_repo: Path, tmp_path: Path) -> None:
     """A dying agy surfaces as AdapterProcessError carrying stderr."""
-    home = install_fake_agy(
-        tmp_path, [{"stdout": "", "stderr": "agy: boom", "exit": 1}]
-    )
+    home = install_fake_agy(tmp_path, [{"stdout": "", "stderr": "agy: boom", "exit": 1}])
     with pytest.raises(AdapterProcessError, match="boom"):
         conduct_review(dirty_repo, adapter_for(home), "wip: dead backend")
 
@@ -268,9 +246,7 @@ def test_missing_binary_is_a_typed_error(dirty_repo: Path, tmp_path: Path) -> No
         conduct_review(dirty_repo, adapter, "wip: missing binary")
 
 
-def test_non_executable_binary_is_a_typed_error(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_non_executable_binary_is_a_typed_error(dirty_repo: Path, tmp_path: Path) -> None:
     """Any spawn failure is a transport failure: a configured binary that
     exists but lacks the exec bit must not escape as raw PermissionError."""
     binary = tmp_path / "agy-no-exec-bit"
@@ -281,34 +257,24 @@ def test_non_executable_binary_is_a_typed_error(
         conduct_review(dirty_repo, adapter, "wip: unspawnable binary")
 
 
-def test_hung_backend_is_killed_into_a_typed_error(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_hung_backend_is_killed_into_a_typed_error(dirty_repo: Path, tmp_path: Path) -> None:
     """A hung agy is killed into a typed error, never a hang."""
-    home = install_fake_agy(
-        tmp_path, [{"sleep": 30, "stdout": envelope(fenced_verdict())}]
-    )
+    home = install_fake_agy(tmp_path, [{"sleep": 30, "stdout": envelope(fenced_verdict())}])
     start = time.monotonic()
     with pytest.raises(AdapterProcessError, match="[Tt]ime"):
         conduct_review(dirty_repo, adapter_for(home, timeout=1), "wip: hung backend")
     assert time.monotonic() - start < 15
 
 
-def test_backend_cannot_wait_on_the_callers_stdin(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_backend_cannot_wait_on_the_callers_stdin(dirty_repo: Path, tmp_path: Path) -> None:
     """A caller whose stdin never closes (a hook, a wrapper script) must
     not stall the review: the backend gets /dev/null, not our stdin."""
-    home = install_fake_agy(
-        tmp_path, [{"read_stdin": True, "stdout": envelope(fenced_verdict())}]
-    )
+    home = install_fake_agy(tmp_path, [{"read_stdin": True, "stdout": envelope(fenced_verdict())}])
     read_end, write_end = os.pipe()
     saved = os.dup(0)
     os.dup2(read_end, 0)
     try:
-        result = conduct_review(
-            dirty_repo, adapter_for(home, timeout=5), "wip: open stdin"
-        )
+        result = conduct_review(dirty_repo, adapter_for(home, timeout=5), "wip: open stdin")
     finally:
         os.dup2(saved, 0)
         for fd in (saved, read_end, write_end):
@@ -320,16 +286,12 @@ def test_envelope_without_conversation_id_is_a_continuity_error(
     dirty_repo: Path, tmp_path: Path
 ) -> None:
     """No conversation id means the review can never be resumed (D1)."""
-    home = install_fake_agy(
-        tmp_path, [{"stdout": envelope(fenced_verdict(), conversation=None)}]
-    )
+    home = install_fake_agy(tmp_path, [{"stdout": envelope(fenced_verdict(), conversation=None)}])
     with pytest.raises(ThreadContinuityError):
         conduct_review(dirty_repo, adapter_for(home), "wip: no conversation")
 
 
-def test_repair_round_resumes_the_conversation(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_repair_round_resumes_the_conversation(dirty_repo: Path, tmp_path: Path) -> None:
     """R2: the single repair goes back via --conversation on the same id."""
     home = install_fake_agy(
         tmp_path,
@@ -361,23 +323,17 @@ def test_non_object_envelope_is_a_typed_error(
 def test_null_response_is_a_loud_typed_error(dirty_repo: Path, tmp_path: Path) -> None:
     """A null response is materially an empty response (sharp edge 2):
     the same loud typed error, never an AttributeError."""
-    stdout = json.dumps(
-        {"status": "SUCCESS", "conversation_id": "conv-agy-1", "response": None}
-    )
+    stdout = json.dumps({"status": "SUCCESS", "conversation_id": "conv-agy-1", "response": None})
     home = install_fake_agy(tmp_path, [{"stdout": stdout, "stderr": DENIAL_NOTE}])
     with pytest.raises(AdapterProcessError, match="auto-denied"):
         conduct_review(dirty_repo, adapter_for(home), "wip: null response")
 
 
-def test_non_string_conversation_id_is_a_continuity_error(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_non_string_conversation_id_is_a_continuity_error(dirty_repo: Path, tmp_path: Path) -> None:
     """D1: a conversation id that is not a string can never be resumed
     (and would poison a later resume argv), so it degrades exactly like
     a missing one - ThreadContinuityError, never a leaked integer."""
-    stdout = json.dumps(
-        {"status": "SUCCESS", "conversation_id": 123, "response": fenced_verdict()}
-    )
+    stdout = json.dumps({"status": "SUCCESS", "conversation_id": 123, "response": fenced_verdict()})
     home = install_fake_agy(tmp_path, [{"stdout": stdout}])
     with pytest.raises(ThreadContinuityError):
         conduct_review(dirty_repo, adapter_for(home), "wip: numeric conversation")

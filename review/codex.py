@@ -28,9 +28,7 @@ DEFAULT_TIMEOUT = 600.0
 class CodexAdapter(ReviewerAdapter):
     """Reviewer backend running `codex exec` against the installed skill."""
 
-    def __init__(
-        self, codex_bin: str = "codex", timeout: float = DEFAULT_TIMEOUT
-    ) -> None:
+    def __init__(self, codex_bin: str = "codex", timeout: float = DEFAULT_TIMEOUT) -> None:
         """Configure the backend invocation.
 
         Args:
@@ -40,9 +38,7 @@ class CodexAdapter(ReviewerAdapter):
         self.codex_bin = codex_bin
         self.timeout = timeout
 
-    def _send(
-        self, prompt: str, worktree: Path, thread_id: str | None
-    ) -> tuple[str, str]:
+    def _send(self, prompt: str, worktree: Path, thread_id: str | None) -> tuple[str, str]:
         """Run one codex exec turn and return its output and thread id.
 
         Args:

@@ -8,7 +8,6 @@ checkout, and lint actually catches broken or misformatted shell.
 
 import os
 import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -66,26 +65,16 @@ def test_make_lint_fails_on_formatting_violation(lint_tree: Path) -> None:
 def test_make_test_invokes_pytest() -> None:
     """The ``test`` target delegates to pytest over the tests directory."""
     result = run_make("test", REPO_ROOT, dry_run=True)
-    assert result.returncode == 0, (
-        f"make -n test failed:\n{result.stdout}\n{result.stderr}"
-    )
-    assert "pytest" in result.stdout, (
-        f"make test does not invoke pytest:\n{result.stdout}"
-    )
+    assert result.returncode == 0, f"make -n test failed:\n{result.stdout}\n{result.stderr}"
+    assert "pytest" in result.stdout, f"make test does not invoke pytest:\n{result.stdout}"
 
 
 def test_make_verify_aggregates_lint_and_test() -> None:
     """``make verify`` runs the lint and test targets as one step."""
     result = run_make("verify", REPO_ROOT, dry_run=True)
-    assert result.returncode == 0, (
-        f"make -n verify failed:\n{result.stdout}\n{result.stderr}"
-    )
-    assert "shellcheck" in result.stdout, (
-        f"make verify does not run lint:\n{result.stdout}"
-    )
-    assert "pytest" in result.stdout, (
-        f"make verify does not run tests:\n{result.stdout}"
-    )
+    assert result.returncode == 0, f"make -n verify failed:\n{result.stdout}\n{result.stderr}"
+    assert "shellcheck" in result.stdout, f"make verify does not run lint:\n{result.stdout}"
+    assert "pytest" in result.stdout, f"make verify does not run tests:\n{result.stdout}"
 
 
 def test_tests_never_run_against_a_stale_environment() -> None:
@@ -98,9 +87,7 @@ def test_tests_never_run_against_a_stale_environment() -> None:
     bug it removes and cannot go stale itself.
     """
     result = run_make("test", REPO_ROOT, dry_run=True)
-    assert result.returncode == 0, (
-        f"make -n test failed:\n{result.stdout}\n{result.stderr}"
-    )
+    assert result.returncode == 0, f"make -n test failed:\n{result.stdout}\n{result.stderr}"
     assert "sync" in result.stdout, (
         f"make test runs pytest without provisioning first:\n{result.stdout}"
     )

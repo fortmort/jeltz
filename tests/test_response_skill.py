@@ -92,9 +92,7 @@ def test_findings_are_consumed_by_id() -> None:
     assert re.search(r"\bfinding id\b", SKILL_TEXT, re.IGNORECASE), (
         "the skill never mentions finding ids"
     )
-    assert re.search(r"\bby id\b", SKILL_TEXT, re.IGNORECASE), (
-        "findings are not addressed by id"
-    )
+    assert re.search(r"\bby id\b", SKILL_TEXT, re.IGNORECASE), "findings are not addressed by id"
 
 
 def test_per_id_dispositions_with_reasons() -> None:
@@ -145,12 +143,12 @@ def test_response_block_example_parses() -> None:
     responses = _example_responses()
     assert responses, "no fenced JSON response example with a dispositions key"
     for response in responses:
-        assert RESPONSE_TOP_KEYS <= response.keys(), (
+        assert RESPONSE_TOP_KEYS.issubset(response.keys()), (
             f"response example missing keys: {RESPONSE_TOP_KEYS - response.keys()}"
         )
         assert response["dispositions"], "response example has no dispositions"
         for entry in response["dispositions"]:
-            assert DISPOSITION_KEYS <= entry.keys(), (
+            assert entry.keys() >= DISPOSITION_KEYS, (
                 f"disposition entry missing: {DISPOSITION_KEYS - entry.keys()}"
             )
             assert entry["disposition"] in DISPOSITION_ENUM, (
@@ -199,13 +197,9 @@ def test_successful_round_two_join_validates() -> None:
     response = _example_responses()[0]
     fixed = [e["id"] for e in response["dispositions"] if e["disposition"] == "fixed"]
     deferred = [
-        e["id"]
-        for e in response["dispositions"]
-        if e["disposition"] == "deferred-non-blocker"
+        e["id"] for e in response["dispositions"] if e["disposition"] == "deferred-non-blocker"
     ]
-    assert fixed and deferred, (
-        "the example must exercise both verdict-joinable dispositions"
-    )
+    assert fixed and deferred, "the example must exercise both verdict-joinable dispositions"
     next_verdict = {
         "schema_version": 1,
         "verdict": "ACCEPTED_WITH_NON_BLOCKERS",
@@ -214,9 +208,7 @@ def test_successful_round_two_join_validates() -> None:
         "non_blockers": [_finding(fid, None) for fid in deferred],
     }
     validate_verdict(next_verdict)
-    resolved_ids = {
-        b["id"] for b in next_verdict["blockers"] if b["disposition"] == "resolved"
-    }
+    resolved_ids = {b["id"] for b in next_verdict["blockers"] if b["disposition"] == "resolved"}
     assert set(fixed) <= resolved_ids, "a fixed id is missing from the join"
 
 

@@ -43,9 +43,7 @@ class AgyAdapter(ReviewerAdapter):
         self.timeout = timeout
         self.model = model
 
-    def _send(
-        self, prompt: str, worktree: Path, thread_id: str | None
-    ) -> tuple[str, str]:
+    def _send(self, prompt: str, worktree: Path, thread_id: str | None) -> tuple[str, str]:
         """Run one agy print-mode turn and return its output and thread id.
 
         Args:
@@ -101,14 +99,10 @@ def _parse_envelope(stdout: str, stderr: str) -> tuple[str, str]:
             f"agy emitted an unparseable envelope: {stdout.strip()[:200]}"
         ) from exc
     if not isinstance(data, dict):
-        raise AdapterProcessError(
-            f"agy envelope is not an object: {stdout.strip()[:200]}"
-        )
+        raise AdapterProcessError(f"agy envelope is not an object: {stdout.strip()[:200]}")
     status = data.get("status", "")
     if status != "SUCCESS":
-        raise AdapterProcessError(
-            f"agy reported status {status or '(none)'}: {stderr.strip()}"
-        )
+        raise AdapterProcessError(f"agy reported status {status or '(none)'}: {stderr.strip()}")
     response = data.get("response", "")
     if not isinstance(response, str) or not response.strip():
         raise AdapterProcessError(

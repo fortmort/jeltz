@@ -168,9 +168,7 @@ def test_fresh_review_runs_single_prompt_with_schema_and_tools(
     allowlist applied. --always-approve is required headless: without it
     the first non-git bash call is silently cancelled (probed live); the
     --tools list bounds what it can approve."""
-    home = install_fake_grok(
-        tmp_path, [INSPECT_OK, {"stdout": envelope(verdict_body())}]
-    )
+    home = install_fake_grok(tmp_path, [INSPECT_OK, {"stdout": envelope(verdict_body())}])
     result = conduct_review(dirty_repo, adapter_for(home), "wip: grok round one")
     assert result.verdict["verdict"] == "ACCEPTED"
     assert result.thread_id == "sess-grok-1"
@@ -191,18 +189,14 @@ def test_preflight_asserts_skill_discovery_in_the_worktree(
     """3.5: no install step exists, so discovery must be asserted, not
     assumed - `grok inspect` runs in the review checkout before any
     reviewer contact."""
-    home = install_fake_grok(
-        tmp_path, [INSPECT_OK, {"stdout": envelope(verdict_body())}]
-    )
+    home = install_fake_grok(tmp_path, [INSPECT_OK, {"stdout": envelope(verdict_body())}])
     conduct_review(dirty_repo, adapter_for(home), "wip: preflight")
     preflight, call = calls(home)
     assert preflight["cwd"] == call["cwd"]
     assert "jeltz-review-" in preflight["cwd"]
 
 
-def test_preflight_missing_skill_is_a_typed_error(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_preflight_missing_skill_is_a_typed_error(dirty_repo: Path, tmp_path: Path) -> None:
     """A checkout where grok does not discover the skill must fail loudly
     before the review starts, not run a skill-less review."""
     home = install_fake_grok(tmp_path, [INSPECT_NO_SKILL])
@@ -211,9 +205,7 @@ def test_preflight_missing_skill_is_a_typed_error(
     assert len(calls(home)) == 1
 
 
-def test_preflight_warning_mention_is_not_discovery(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_preflight_warning_mention_is_not_discovery(dirty_repo: Path, tmp_path: Path) -> None:
     """The skill name appearing outside the skills array - e.g. a config
     warning that it failed to load - is not discovery. The preflight
     parses `grok inspect --json` and requires an exact skill entry,
@@ -226,21 +218,15 @@ def test_preflight_warning_mention_is_not_discovery(
     assert len(calls(home)) == 1
 
 
-def test_preflight_disabled_skill_is_not_discovery(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_preflight_disabled_skill_is_not_discovery(dirty_repo: Path, tmp_path: Path) -> None:
     """A listed skill whose compatibilityStatus is not enabled cannot be
     invoked, so it must not pass the preflight."""
-    home = install_fake_grok(
-        tmp_path, [inspect_listing("skeptical-reviewer", status="disabled")]
-    )
+    home = install_fake_grok(tmp_path, [inspect_listing("skeptical-reviewer", status="disabled")])
     with pytest.raises(AdapterProcessError, match="skeptical-reviewer"):
         conduct_review(dirty_repo, adapter_for(home), "wip: disabled skill")
 
 
-def test_unparseable_inspect_output_is_a_typed_error(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_unparseable_inspect_output_is_a_typed_error(dirty_repo: Path, tmp_path: Path) -> None:
     """Inspect output that is not JSON (e.g. the human-readable listing)
     is a transport failure, not a discovery pass."""
     home = install_fake_grok(
@@ -267,20 +253,14 @@ def test_malformed_skills_array_is_a_typed_error(
 def test_preflight_failure_is_a_typed_error(dirty_repo: Path, tmp_path: Path) -> None:
     """A dying `grok inspect` (not logged in, broken install) is a
     transport failure carrying its stderr."""
-    home = install_fake_grok(
-        tmp_path, [{"stdout": "", "stderr": "grok: not logged in", "exit": 1}]
-    )
+    home = install_fake_grok(tmp_path, [{"stdout": "", "stderr": "grok: not logged in", "exit": 1}])
     with pytest.raises(AdapterProcessError, match="not logged in"):
         conduct_review(dirty_repo, adapter_for(home), "wip: dead preflight")
 
 
-def test_fresh_review_invokes_the_installed_skill(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_fresh_review_invokes_the_installed_skill(dirty_repo: Path, tmp_path: Path) -> None:
     """The prompt is the slash-command skill invocation plus the packet."""
-    home = install_fake_grok(
-        tmp_path, [INSPECT_OK, {"stdout": envelope(verdict_body())}]
-    )
+    home = install_fake_grok(tmp_path, [INSPECT_OK, {"stdout": envelope(verdict_body())}])
     conduct_review(dirty_repo, adapter_for(home), "wip: skill framing", todo_ref="T10")
     _, call = calls(home)
     argv = call["argv"]
@@ -294,13 +274,9 @@ def test_fresh_review_invokes_the_installed_skill(
     assert "never a placeholder" in prompt
 
 
-def test_review_runs_inside_the_disposable_worktree(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_review_runs_inside_the_disposable_worktree(dirty_repo: Path, tmp_path: Path) -> None:
     """grok works in the T6 checkout, never the developer's tree."""
-    home = install_fake_grok(
-        tmp_path, [INSPECT_OK, {"stdout": envelope(verdict_body())}]
-    )
+    home = install_fake_grok(tmp_path, [INSPECT_OK, {"stdout": envelope(verdict_body())}])
     conduct_review(dirty_repo, adapter_for(home), "wip: worktree cwd")
     _, call = calls(home)
     assert "jeltz-review-" in call["cwd"]
@@ -330,9 +306,7 @@ def test_resume_reuses_the_prior_session(dirty_repo: Path, tmp_path: Path) -> No
     assert not argv[argv.index("-p") + 1].startswith("/skeptical-reviewer")
 
 
-def test_bare_schema_output_is_fenced_for_the_parser(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_bare_schema_output_is_fenced_for_the_parser(dirty_repo: Path, tmp_path: Path) -> None:
     """Schema-constrained text arrives as bare JSON (live probe) and is
     normalized into the fenced block form the T4 parser expects."""
     body = verdict_body()
@@ -342,9 +316,7 @@ def test_bare_schema_output_is_fenced_for_the_parser(
     assert result.raw == f"```json\n{body}\n```\n"
 
 
-def test_structured_output_is_preferred_over_text(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_structured_output_is_preferred_over_text(dirty_repo: Path, tmp_path: Path) -> None:
     """Under tool use the envelope's `text` concatenates the model's
     message with the structured output (probed live), so when grok
     supplies the parsed `structuredOutput` object the adapter uses it
@@ -352,17 +324,13 @@ def test_structured_output_is_preferred_over_text(
     body = verdict_body()
     data = json.loads(envelope(f"prose preamble\n{body}{body}"))
     data["structuredOutput"] = json.loads(body)
-    home = install_fake_grok(
-        tmp_path, [INSPECT_OK, {"stdout": json.dumps(data) + "\n"}]
-    )
+    home = install_fake_grok(tmp_path, [INSPECT_OK, {"stdout": json.dumps(data) + "\n"}])
     result = conduct_review(dirty_repo, adapter_for(home), "wip: structured")
     assert result.verdict["verdict"] == "ACCEPTED"
     assert result.raw == f"```json\n{body}\n```\n"
 
 
-def test_prose_with_fenced_verdict_passes_verbatim(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_prose_with_fenced_verdict_passes_verbatim(dirty_repo: Path, tmp_path: Path) -> None:
     """Text already carrying prose or a fence is not double-wrapped."""
     text = f"The work is sound.\n\n```json\n{verdict_body()}\n```\n"
     home = install_fake_grok(tmp_path, [INSPECT_OK, {"stdout": envelope(text)}])
@@ -410,17 +378,13 @@ def test_empty_text_is_an_empty_output_error(dirty_repo: Path, tmp_path: Path) -
 
 def test_null_text_is_a_typed_error(dirty_repo: Path, tmp_path: Path) -> None:
     """A non-string text field is a broken envelope, never a crash."""
-    stdout = json.dumps(
-        {"text": None, "sessionId": "sess-grok-1", "stopReason": "end_turn"}
-    )
+    stdout = json.dumps({"text": None, "sessionId": "sess-grok-1", "stopReason": "end_turn"})
     home = install_fake_grok(tmp_path, [INSPECT_OK, {"stdout": stdout}])
     with pytest.raises(AdapterProcessError, match="text"):
         conduct_review(dirty_repo, adapter_for(home), "wip: null text")
 
 
-def test_unparseable_envelope_is_a_typed_error(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_unparseable_envelope_is_a_typed_error(dirty_repo: Path, tmp_path: Path) -> None:
     """Stdout that is not a JSON envelope is a transport failure."""
     home = install_fake_grok(tmp_path, [INSPECT_OK, {"stdout": "not an envelope\n"}])
     with pytest.raises(AdapterProcessError):
@@ -438,9 +402,7 @@ def test_non_object_envelope_is_a_typed_error(
         conduct_review(dirty_repo, adapter_for(home), "wip: non-object")
 
 
-def test_backend_nonzero_exit_is_a_typed_error(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_backend_nonzero_exit_is_a_typed_error(dirty_repo: Path, tmp_path: Path) -> None:
     """A dying grok surfaces as AdapterProcessError carrying stderr."""
     home = install_fake_grok(
         tmp_path, [INSPECT_OK, {"stdout": "", "stderr": "grok: boom", "exit": 1}]
@@ -456,9 +418,7 @@ def test_missing_binary_is_a_typed_error(dirty_repo: Path, tmp_path: Path) -> No
         conduct_review(dirty_repo, adapter, "wip: missing binary")
 
 
-def test_non_executable_binary_is_a_typed_error(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_non_executable_binary_is_a_typed_error(dirty_repo: Path, tmp_path: Path) -> None:
     """Any spawn failure is a transport failure: a configured binary that
     exists but lacks the exec bit must not escape as raw PermissionError."""
     binary = tmp_path / "grok-no-exec-bit"
@@ -469,9 +429,7 @@ def test_non_executable_binary_is_a_typed_error(
         conduct_review(dirty_repo, adapter, "wip: unspawnable binary")
 
 
-def test_hung_backend_is_killed_into_a_typed_error(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_hung_backend_is_killed_into_a_typed_error(dirty_repo: Path, tmp_path: Path) -> None:
     """A hung grok is killed into a typed error, never a hang."""
     home = install_fake_grok(
         tmp_path, [INSPECT_OK, {"sleep": 30, "stdout": envelope(verdict_body())}]
@@ -482,9 +440,7 @@ def test_hung_backend_is_killed_into_a_typed_error(
     assert time.monotonic() - start < 15
 
 
-def test_backend_cannot_wait_on_the_callers_stdin(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_backend_cannot_wait_on_the_callers_stdin(dirty_repo: Path, tmp_path: Path) -> None:
     """A caller whose stdin never closes (a hook, a wrapper script) must
     not stall the review: the backend gets /dev/null, not our stdin."""
     home = install_fake_grok(
@@ -495,9 +451,7 @@ def test_backend_cannot_wait_on_the_callers_stdin(
     saved = os.dup(0)
     os.dup2(read_end, 0)
     try:
-        result = conduct_review(
-            dirty_repo, adapter_for(home, timeout=5), "wip: open stdin"
-        )
+        result = conduct_review(dirty_repo, adapter_for(home, timeout=5), "wip: open stdin")
     finally:
         os.dup2(saved, 0)
         for fd in (saved, read_end, write_end):
@@ -516,15 +470,11 @@ def test_envelope_without_session_id_is_a_continuity_error(
         conduct_review(dirty_repo, adapter_for(home), "wip: no session")
 
 
-def test_non_string_session_id_is_a_continuity_error(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_non_string_session_id_is_a_continuity_error(dirty_repo: Path, tmp_path: Path) -> None:
     """D1: a session id that is not a string can never be resumed (and
     would poison a later resume argv), so it degrades exactly like a
     missing one - ThreadContinuityError, never a leaked integer."""
-    stdout = json.dumps(
-        {"text": verdict_body(), "sessionId": 123, "stopReason": "end_turn"}
-    )
+    stdout = json.dumps({"text": verdict_body(), "sessionId": 123, "stopReason": "end_turn"})
     home = install_fake_grok(tmp_path, [INSPECT_OK, {"stdout": stdout}])
     with pytest.raises(ThreadContinuityError):
         conduct_review(dirty_repo, adapter_for(home), "wip: numeric session")
@@ -594,9 +544,7 @@ def test_costs_are_recorded_into_review_state(dirty_repo: Path, tmp_path: Path) 
     )
 
 
-def test_missing_telemetry_records_no_cost_entry(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_missing_telemetry_records_no_cost_entry(dirty_repo: Path, tmp_path: Path) -> None:
     """An envelope reporting neither cost nor usage contributes no
     entry - never a {None, None} placeholder polluting review state."""
     stdout = (

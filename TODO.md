@@ -16,9 +16,9 @@ Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer, and all four can enforce the gate
 (the "only three" premise fell during T19 - see 3.5).
 
-Status: T1-T20, T22, and T23 complete; next task is T24. T32-T38 (T32-T37
-added 2026-08-17 after T20's acceptance, T38 during T23) are Phase 5 work
-and must land before Phase 6. T21 (documentation) was moved out of Phase 4
+Status: T1-T20 and T22-T24 complete; next task is T25. T32-T39 (T32-T37
+added 2026-08-17 after T20's acceptance, T38 during T23, T39 during T24)
+are Phase 5 work and must land before Phase 6. T21 (documentation) was moved out of Phase 4
 to the end of Phase 5 on 2026-08-17: it documents installation, and
 installation is rewritten by T23 (uv, now landed), T27 (install.sh
 hardening), T33 (installer ships the engine), and T34 (installer wires the
@@ -1766,7 +1766,7 @@ Behavior as specified in the original acceptance:
   `jsonschema` - `review/verdict.py` imports it at module scope, and T33
   ships that module into consumer repos that never install jeltz's test
   tooling, so it is production, not dev. `[dependency-groups].dev` carries
-  `pytest` and `pytest-cov` (`ruff` joins in T24). Tests assert both
+  `pytest` and `pytest-cov` (`ruff` joined in T24). Tests assert both
   directions: nothing dev leaks into production and jsonschema is not
   demoted to dev.
 - **Fresh-checkout provisioning from pyproject.toml alone**, proven by a
@@ -1941,42 +1941,116 @@ Collateral, declared:
 - Removed the leftover `build/` and `jeltz.egg-info/` directories left by
   T22's pip installs. Nothing creates them now.
 
-#### T24. Full ruff rules in pyproject.toml + Makefile lint
+#### T24. Full ruff rules in pyproject.toml + Makefile lint - DONE
 Goal: the repo's own standard becomes the full ruff rule set; the
 abbreviated set stays where it belongs (the ruff.sh consumer hook, which
 keeps its narrow rules on purpose to avoid red/green/refactor thrash).
-- Add `ruff` to the pyproject dev dependency group (declared here, not
-  in T22, so the tool and its config land together and are provisioned
-  by uv like the rest of the Python tooling).
-- Add to pyproject.toml (jeltz-specific values filled in):
-  `[tool.ruff]` line-length 100, target-version py311, src = review and
-  tests; `[tool.ruff.lint]` select E, W, F, I, B, C4, UP, ARG, SIM;
-  ignore E501 (formatter's job) and B008; `[tool.ruff.lint.isort]`
-  known-first-party = review.
-- Bring the whole Python tree (review/, tests/, conftest.py) into
-  compliance with that full set in the same task: committing the tracked
-  `[tool.ruff]` section flips repo-mode.sh to strict for this tree the
-  moment it lands, so config and cleanup are one atomic change (the T1
-  ordering hazard, now on purpose).
-- `make lint` must run the full ruff (`ruff check` and
-  `ruff format --check`) alongside the existing shellcheck/shfmt; update
-  the Makefile header comment that currently documents the deliberate
-  absence of a tracked ruff config.
-- **Re-couple lint to provisioning while doing it.** T23 narrowed each
-  target to the external tools it actually invokes, so `lint` currently
-  depends on `preflight-shell` alone. ruff is uv-provisioned like the rest
-  of the Python tooling, so it arrives through the venv, not the preflight:
-  the edit is `lint: preflight-shell venv`, which restores the uv
-  requirement transitively (`venv: preflight-uv`). The preflight itself
-  does not change - it gates only what uv cannot install.
-  `tests/test_provisioning.py::test_lint_does_not_require_the_python_provisioner`
-  encodes today's truth and is the tripwire for this; it is EXPECTED to
-  fail here and must be updated to assert the new scope, not deleted.
-- Do NOT touch the abbreviated rule list inside the shipped ruff.sh
-  hook - that is consumer-facing phase tooling, not the repo standard.
-Acceptance: `make verify` green with the full rule set enforced;
-repo-mode.sh now resolves jeltz to strict and the diff-aware hooks still
-behave (T1's tests keep passing); ruff.sh's shipped rule set unchanged.
+
+Delivered: `[tool.ruff]` in pyproject.toml, `ruff` in the dev dependency
+group (locked at 0.16.3), a `make lint` that runs ruff beside
+shellcheck/shfmt and provisions first, and the whole Python tree brought
+into compliance. Contract pinned by 9 tests in
+`tests/test_lint_standard.py`, plus the tripwire rewrite in
+`tests/test_provisioning.py` and the two T22 tests this task deliberately
+reverses (removed from `tests/test_packaging.py`, which now says where
+their subject went).
+
+Behavior as specified in the original acceptance:
+- **The standard is declared, not incanted**: line-length 100,
+  target-version py311, select E/W/F/I/B/C4/UP/ARG/SIM, ignore E501 and
+  B008, `known-first-party = ["review"]`.
+- **The whole tree complies** - `review/`, `tests/`, `conftest.py` - and
+  `ruff format --check` reproduces the committed formatting. Both are
+  asserted by running ruff over the tree, and both were confirmed to have
+  teeth by planting a violating file and a misformatted one (each fails
+  the matching test; probe removed).
+- **`make lint` runs `ruff check` and `ruff format --check`** alongside the
+  shell linters, from `$(VENV)/bin/ruff` rather than PATH, so the lockfile
+  decides which ruff version judges this tree.
+- **Lint is re-coupled to provisioning**: `lint: preflight-shell venv`
+  restores the uv requirement transitively, exactly as T23 predicted. The
+  preflight is unchanged - it gates only what uv cannot install.
+- **This tree now resolves to strict** hook enforcement, asserted by
+  committing the real pyproject.toml into a scratch repo and probing
+  `hook_repo_mode`. That is the T1 ordering hazard, taken deliberately:
+  the section that declares the standard is the section that tells the
+  hooks to enforce it on whole files.
+- **The shipped ruff.sh rule set is untouched**, guarded by a test that
+  fails if either the abbreviated ignore list changes or a `--select`
+  appears (both mutations verified to fail it).
+
+Decisions recorded:
+- **`src = ["."]`, not `["review", "tests"]` as this task originally
+  specified.** Pointing src AT the packages tells ruff to look for
+  first-party modules INSIDE them, which demotes `tests.conftest` to
+  third-party: probed live, that spelling produces 14 I001 errors and
+  would reorder import blocks wrongly. The repo root is where the
+  first-party packages live, so that is what src names. The test pins the
+  behavior (a `review` import sharing a block with pytest is flagged)
+  rather than the literal value.
+- **line-length 100 was honoured as specified**, at a cost worth naming:
+  the tree was formatted at ruff's default 88, so adopting 100 reformatted
+  30 files (~2,100 lines). The change is mechanical and mostly collapses
+  artificially split assertions back onto one line, but it does mean this
+  commit is the blame target for much of the test suite.
+- **Ruff is handed the tree, not a file list.** `make lint` runs
+  `ruff check .` for the same reason SH_SOURCES is a wildcard: a new
+  Python file is covered without anyone remembering to list it. The tests
+  invoke ruff the same way, so lint coverage cannot drift between them.
+- **`.issubset()` rather than the SIM300 autofix.** Seven assertions read
+  `REQUIRED <= actual.keys()`; ruff's fix flips them to
+  `actual.keys() >= REQUIRED`, which reads backwards for a
+  required-keys check. The explicit method is clean under the rule and
+  says what it means.
+- License: ruff is MIT, dev-only tooling, per CLAUDE.md.
+
+Hardened after review (no blockers; both actionable non-blockers fixed):
+- **The config contract is pinned where loosening it matters.** `src` is
+  asserted exactly and the ignore list as an exact set, not a subset: a
+  new ignore is a hole in the standard and would have slipped past the
+  original subset check (the reviewer's example, adding F401, is now a
+  test failure). Selections stay a lower bound on purpose - adding a rule
+  family raises the standard and needs no permission from a test. Both
+  assertions were mutation-checked: F401-in-ignore and the TODO's literal
+  `src = ["review", "tests"]` each fail, and the second also fails the
+  clean-tree test, which is the behavioral guard behind the literal.
+- **The Makefile comment above the preflight targets no longer claims
+  lint needs no provisioner.** It was true when T23 wrote it and this task
+  falsified it; it now says lint's uv requirement is transitive through
+  `venv`, which is the part that keeps the preflight gating only what uv
+  cannot install.
+- Recorded, not acted on: the vacuous shell-lint tests, still deferred to
+  T38 with the reviewer's agreement. They are shell-lint coverage and
+  nothing in T24's ruff coverage rests on them.
+
+Real defects the new rules found (each fixed, not suppressed):
+- `review/stop_hook.py` - the default `gate_when` lambda took a `payload`
+  it never read (ARG005); renamed `_payload` so the signature says so.
+- `review/verdict.py` - `Callable` imported from `typing` (UP035), which
+  has been the deprecated spelling since 3.9; now `collections.abc`.
+- `tests/test_installer.py`, `tests/test_makefile.py` - imports left
+  behind by earlier refactors (F401).
+- `tests/test_run.py` - a test requested the `capsys` fixture and never
+  used it (ARG001), so it read as if it asserted on output.
+- `tests/test_worktree.py` - nested `with` (SIM117), now one statement.
+
+#### T39. Test git-fixture boilerplate is duplicated eight ways (found during T24)
+Goal: one definition of "a scratch git repo with a pinned identity".
+- Evidence (2026-08-18): `init` + three `git config` calls (user.name,
+  user.email, commit.gpgsign) appear verbatim in `tests/conftest.py` and
+  in seven test modules (`test_bridge`, `test_gate`, `test_agy_stop`,
+  `test_claude_stop`, `test_codex_stop`, `test_grok_stop`,
+  `test_lint_standard`). Every one exists for the same reason - the suite
+  must not depend on the machine's global git config - so a change to
+  that reasoning has eight places to reach.
+- Extract a `scratch_repo(path)` helper (or fixture) into
+  `tests/conftest.py` beside the existing `git()` and `dirty_repo`, and
+  route the copies through it. Behavior must not change: the tests that
+  need a dirty tree keep building one on top.
+Not fixed inside T24: it predates this task (the boilerplate arrived with
+T6) and touching seven unrelated modules to fix scaffolding is exactly the
+scope creep the reviewer-response rules forbid.
+Acceptance: one definition, seven call sites, `make verify` green.
 
 #### T25. shfmt formatting contract via .editorconfig
 Goal: `shfmt -d <sources>` reproduces committed formatting with no
@@ -2259,7 +2333,7 @@ topics (T28-T30), each reorganized for a reader who never saw the
 TODOs - by topic, not by task number, keeping task-numbered acceptance
 evidence only where it documents a verified-against version. These run
 late deliberately: content is only stable once every Phase 5 task lands
-(T21-T27 and T32-T38).
+(T21-T27 and T32-T39).
 
 #### T28. docs/: architecture and decision log
 - Extract the problem statement (section 1), the decision log D1-D6

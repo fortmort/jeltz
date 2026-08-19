@@ -145,9 +145,7 @@ def _reviewer_position(blocker: dict[str, Any]) -> str:
     return f"{blocker['claim']} ({blocker['why']}); disposition: {disposition}"
 
 
-def evaluate(
-    state: dict[str, Any], response: dict[str, Any] | None = None
-) -> Escalation | None:
+def evaluate(state: dict[str, Any], response: dict[str, Any] | None = None) -> Escalation | None:
     """Decide whether the just-completed round terminates the review.
 
     Args:
@@ -195,9 +193,7 @@ def evaluate(
         coder = f"{claim['disposition']}: {claim['reason']}"
         if claim["disposition"] == "rejected-invalid":
             dispute(3, blocker, coder)
-        elif (
-            claim["disposition"] == "fixed" and blocker.get("disposition") != "resolved"
-        ):
+        elif claim["disposition"] == "fixed" and blocker.get("disposition") != "resolved":
             dispute(2, blocker, coder)
     for blocker in verdict["blockers"]:
         if blocker.get("disposition") == "regressed" and blocker["id"] not in seen:
@@ -211,9 +207,7 @@ def evaluate(
                 continue
             claim = claims.get(blocker["id"])
             coder = (
-                f"{claim['disposition']}: {claim['reason']}"
-                if claim
-                else "no position recorded"
+                f"{claim['disposition']}: {claim['reason']}" if claim else "no position recorded"
             )
             dispute(1, blocker, coder)
     if not conditions:
@@ -264,8 +258,7 @@ def render_dossier(escalation: Escalation, history: list[dict[str, Any]]) -> str
     if history:
         for record in history:
             blockers = ", ".join(
-                f"{b['id']} ({b['disposition'] or 'no disposition'})"
-                for b in record["blockers"]
+                f"{b['id']} ({b['disposition'] or 'no disposition'})" for b in record["blockers"]
             )
             lines.append(
                 f"- round {record['round']}: {record['verdict']}"

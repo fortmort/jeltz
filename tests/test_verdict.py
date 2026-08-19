@@ -179,9 +179,8 @@ def test_parse_returns_the_embedded_verdict() -> None:
 
 def test_parse_ignores_non_verdict_json_blocks() -> None:
     """A quoted JSON block without schema_version does not confuse parsing."""
-    text = (
-        'The config under review:\n\n```json\n{"backend": "codex"}\n```\n\n'
-        + _review(VALID_VERDICT)
+    text = 'The config under review:\n\n```json\n{"backend": "codex"}\n```\n\n' + _review(
+        VALID_VERDICT
     )
     assert parse_verdict(text) == VALID_VERDICT
 
@@ -341,9 +340,7 @@ def test_accepting_rereview_retains_resolved_blocker_ids() -> None:
     every blocker was fixed.
     """
     resolved = dict(VALID_VERDICT["blockers"][0], disposition="resolved")
-    validate_verdict(
-        _mutated(verdict="ACCEPTED", round=2, blockers=[resolved], non_blockers=[])
-    )
+    validate_verdict(_mutated(verdict="ACCEPTED", round=2, blockers=[resolved], non_blockers=[]))
 
 
 def test_round_one_resolved_disposition_does_not_bypass_acceptance() -> None:

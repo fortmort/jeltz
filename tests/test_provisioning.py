@@ -110,9 +110,7 @@ def _uv_floor() -> str:
     Returns:
         The version string declared in tools/preflight.sh.
     """
-    match = re.search(
-        r'UV_MIN_VERSION="([0-9][0-9.]*)"', PREFLIGHT.read_text(encoding="utf-8")
-    )
+    match = re.search(r'UV_MIN_VERSION="([0-9][0-9.]*)"', PREFLIGHT.read_text(encoding="utf-8"))
     assert match, "tools/preflight.sh declares no UV_MIN_VERSION"
     return match.group(1)
 
@@ -126,9 +124,7 @@ def test_no_make_target_invokes_pip(tmp_path: Path, target: str) -> None:
     proves nothing.
     """
     result = run_make(target, _checkout(tmp_path), dry_run=True)
-    assert result.returncode == 0, (
-        f"make -n {target} failed:\n{result.stdout}\n{result.stderr}"
-    )
+    assert result.returncode == 0, f"make -n {target} failed:\n{result.stdout}\n{result.stderr}"
     assert result.stdout.strip(), f"make -n {target} printed no recipe to inspect"
     assert not re.search(r"\bpip\b", result.stdout), (
         f"make {target} still invokes pip:\n{result.stdout}"
@@ -189,9 +185,7 @@ def test_provisioning_leaves_no_build_artifacts_in_the_tree(tmp_path: Path) -> N
         for pattern in ("*.egg-info", "build")
         for path in tree.glob(pattern)
     )
-    assert not artifacts, (
-        f"provisioning wrote build artifacts into the tree: {artifacts}"
-    )
+    assert not artifacts, f"provisioning wrote build artifacts into the tree: {artifacts}"
 
 
 def test_the_committed_lockfile_matches_the_declared_dependencies() -> None:
@@ -201,12 +195,8 @@ def test_the_committed_lockfile_matches_the_declared_dependencies() -> None:
     wrong thing while looking authoritative.
     """
     assert LOCKFILE.is_file(), "no uv.lock committed alongside pyproject.toml"
-    ignored = subprocess.run(
-        ["git", "check-ignore", "-q", str(LOCKFILE)], cwd=REPO_ROOT
-    )
-    assert ignored.returncode != 0, (
-        "uv.lock is gitignored; consumers never see the pins"
-    )
+    ignored = subprocess.run(["git", "check-ignore", "-q", str(LOCKFILE)], cwd=REPO_ROOT)
+    assert ignored.returncode != 0, "uv.lock is gitignored; consumers never see the pins"
 
     check = subprocess.run(
         ["uv", "lock", "--check"],
@@ -253,9 +243,7 @@ def test_a_stale_lockfile_stops_provisioning_instead_of_being_rewritten(
 
 
 @pytest.mark.parametrize("tool", EXTERNAL_TOOLS)
-def test_a_missing_external_prerequisite_is_named_with_a_remedy(
-    tmp_path: Path, tool: str
-) -> None:
+def test_a_missing_external_prerequisite_is_named_with_a_remedy(tmp_path: Path, tool: str) -> None:
     """A missing external binary fails the build by name, before any work."""
     tree = _checkout(tmp_path)
     override = f"{TOOL_OVERRIDES[tool]}={tmp_path}/definitely-absent-{tool}"
@@ -269,26 +257,34 @@ def test_a_missing_external_prerequisite_is_named_with_a_remedy(
     )
 
 
-def test_lint_does_not_require_the_python_provisioner(tmp_path: Path) -> None:
-    """``make lint`` runs shell tools only, so a missing uv must not stop it.
+def test_lint_provisions_the_python_tooling_it_runs(tmp_path: Path) -> None:
+    """``make lint`` provisions before linting, because ruff arrives from uv.
 
-    ``make verify`` still reports every gap at once - learning about
-    prerequisites one build at a time is the failure mode that check exists
-    to remove - but a focused target should not fail on a tool it never runs.
+    T23 narrowed each target to the tools it actually invokes, and lint ran
+    shell tools only. T24 put ruff in the dev dependency group, so lint now
+    runs Python tooling too - and that tooling comes through the venv, not
+    through the preflight, which gates only what uv cannot install. The
+    requirement on uv is therefore transitive (``lint: ... venv``, ``venv:
+    preflight-uv``): it must provision first, and it must fail without uv
+    rather than linting against whatever ruff happens to be on PATH.
     """
-    result = run_make(
-        "lint", REPO_ROOT, overrides=(f"UV={tmp_path}/absent-uv",), timeout=120
+    dry = run_make("lint", REPO_ROOT, dry_run=True)
+    assert dry.returncode == 0, f"make -n lint failed:\n{dry.stdout}\n{dry.stderr}"
+    assert "sync" in dry.stdout, f"make lint runs ruff without provisioning it first:\n{dry.stdout}"
+    assert dry.stdout.index("sync") < dry.stdout.index("ruff"), (
+        f"provisioning runs after the linter it provisions:\n{dry.stdout}"
     )
-    assert result.returncode == 0, (
-        f"make lint failed without uv, which it never invokes:"
-        f"\n{result.stdout}\n{result.stderr}"
+
+    result = run_make("lint", REPO_ROOT, overrides=(f"UV={tmp_path}/absent-uv",), timeout=120)
+    combined = result.stdout + result.stderr
+    assert result.returncode != 0, (
+        f"make lint passed without the provisioner that supplies ruff:\n{combined}"
     )
+    assert "uv" in combined, f"the failure does not name the missing tool:\n{combined}"
 
 
 @pytest.mark.parametrize("target", ["venv", "lock"])
-def test_provisioning_does_not_require_the_shell_tools(
-    tmp_path: Path, target: str
-) -> None:
+def test_provisioning_does_not_require_the_shell_tools(tmp_path: Path, target: str) -> None:
     """Provisioning runs uv only, so shellcheck and shfmt need not be present."""
     tree = _checkout(tmp_path)
     result = run_make(
@@ -341,12 +337,8 @@ def test_an_unsupported_uv_version_is_refused_by_name(tmp_path: Path) -> None:
 
     combined = result.stdout + result.stderr
     assert result.returncode != 0, f"an unsupported uv provisioned anyway:\n{combined}"
-    assert "0.4.0" in combined, (
-        f"the failure does not name the version found:\n{combined}"
-    )
-    assert _uv_floor() in combined, (
-        f"the failure does not name the required version:\n{combined}"
-    )
+    assert "0.4.0" in combined, f"the failure does not name the version found:\n{combined}"
+    assert _uv_floor() in combined, f"the failure does not name the required version:\n{combined}"
 
 
 def test_a_supported_uv_provisions_from_the_lockfile(tmp_path: Path) -> None:
@@ -361,9 +353,7 @@ def test_a_supported_uv_provisions_from_the_lockfile(tmp_path: Path) -> None:
     stub = _stub_uv(tmp_path, _uv_floor(), log)
     result = run_make("venv", tree, overrides=(f"UV={stub}",), timeout=120)
 
-    assert result.returncode == 0, (
-        f"a supported uv was rejected:\n{result.stdout}\n{result.stderr}"
-    )
+    assert result.returncode == 0, f"a supported uv was rejected:\n{result.stdout}\n{result.stderr}"
     calls = log.read_text().splitlines() if log.exists() else []
     assert any(call.startswith("sync") for call in calls), (
         f"provisioning never ran uv sync:\n{calls}"
@@ -386,11 +376,7 @@ def test_readme_documents_the_prerequisites_and_the_uv_floor() -> None:
     )
     documented = text.split("## Development", 1)[1]
     for tool in EXTERNAL_TOOLS:
-        installs = [
-            line
-            for line in documented.splitlines()
-            if tool in line and "install" in line
-        ]
+        installs = [line for line in documented.splitlines() if tool in line and "install" in line]
         assert installs, f"README documents no way to install the {tool} prerequisite"
     assert _uv_floor() in documented, (
         f"README does not document the enforced uv floor ({_uv_floor()})"

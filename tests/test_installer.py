@@ -9,7 +9,6 @@ repo shipped.
 """
 
 import os
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -70,9 +69,7 @@ def test_project_install_copies_every_skill(installed_repo: Path) -> None:
         src = REPO_ROOT / "skills" / name / "SKILL.md"
         dst = installed_repo / ".claude" / "skills" / name / "SKILL.md"
         assert dst.is_file(), f"missing installed skill: {name}"
-        assert dst.read_text() == src.read_text(), (
-            f"installed copy of {name} differs from source"
-        )
+        assert dst.read_text() == src.read_text(), f"installed copy of {name} differs from source"
 
 
 def test_project_install_links_agents_dir(installed_repo: Path) -> None:
@@ -92,9 +89,7 @@ def test_project_install_stamps_manifest(installed_repo: Path) -> None:
     manifest = installed_repo / ".claude" / "skills" / ".jeltz-manifest"
     assert manifest.is_file(), "no manifest stamped"
     lines = manifest.read_text().splitlines()
-    assert lines and lines[0].startswith("# jeltz "), (
-        f"manifest missing version stamp: {lines[:1]}"
-    )
+    assert lines and lines[0].startswith("# jeltz "), f"manifest missing version stamp: {lines[:1]}"
     body = "\n".join(lines[1:])
     for name in SOURCE_SKILLS:
         assert f"{name}/SKILL.md" in body, f"{name} not covered by manifest"
@@ -137,18 +132,14 @@ def test_check_detects_missing_agents_link(installed_repo: Path) -> None:
     """
     (installed_repo / ".agents" / "skills").unlink()
     result = _run_installer("--check", str(installed_repo))
-    assert result.returncode != 0, (
-        "check passed despite a missing .agents/skills symlink"
-    )
+    assert result.returncode != 0, "check passed despite a missing .agents/skills symlink"
     combined = result.stdout + result.stderr
     assert ".agents/skills" in combined, (
         f"drift report does not name the missing symlink:\n{combined}"
     )
 
 
-def test_check_detects_retargeted_agents_link(
-    installed_repo: Path, tmp_path: Path
-) -> None:
+def test_check_detects_retargeted_agents_link(installed_repo: Path, tmp_path: Path) -> None:
     """--check fails when .agents/skills points somewhere else."""
     decoy = tmp_path / "decoy-skills"
     decoy.mkdir()
@@ -156,9 +147,7 @@ def test_check_detects_retargeted_agents_link(
     link.unlink()
     link.symlink_to(decoy)
     result = _run_installer("--check", str(installed_repo))
-    assert result.returncode != 0, (
-        "check passed despite a retargeted .agents/skills symlink"
-    )
+    assert result.returncode != 0, "check passed despite a retargeted .agents/skills symlink"
 
 
 def test_reinstall_repairs_replaced_agents_link(installed_repo: Path) -> None:
@@ -167,13 +156,9 @@ def test_reinstall_repairs_replaced_agents_link(installed_repo: Path) -> None:
     link.unlink()
     link.mkdir()
     result = _run_installer(str(installed_repo))
-    assert result.returncode == 0, (
-        f"reinstall failed:\n{result.stdout}\n{result.stderr}"
-    )
+    assert result.returncode == 0, f"reinstall failed:\n{result.stdout}\n{result.stderr}"
     check = _run_installer("--check", str(installed_repo))
-    assert check.returncode == 0, (
-        "check still fails after reinstalling over a non-symlink"
-    )
+    assert check.returncode == 0, "check still fails after reinstalling over a non-symlink"
 
 
 def test_reinstall_repairs_drift(installed_repo: Path) -> None:
@@ -181,9 +166,7 @@ def test_reinstall_repairs_drift(installed_repo: Path) -> None:
     victim = installed_repo / ".claude" / "skills" / SOURCE_SKILLS[0] / "SKILL.md"
     victim.write_text("clobbered\n")
     result = _run_installer(str(installed_repo))
-    assert result.returncode == 0, (
-        f"reinstall failed:\n{result.stdout}\n{result.stderr}"
-    )
+    assert result.returncode == 0, f"reinstall failed:\n{result.stdout}\n{result.stderr}"
     check = _run_installer("--check", str(installed_repo))
     assert check.returncode == 0, "check still fails after a repair install"
 
@@ -197,9 +180,7 @@ def test_user_install_covers_claude_and_codex(tmp_path: Path) -> None:
         "--user",
         env={"HOME": str(home), "CODEX_HOME": str(codex_home)},
     )
-    assert result.returncode == 0, (
-        f"user install failed:\n{result.stdout}\n{result.stderr}"
-    )
+    assert result.returncode == 0, f"user install failed:\n{result.stdout}\n{result.stderr}"
     for name in SOURCE_SKILLS:
         assert (home / ".claude" / "skills" / name / "SKILL.md").is_file(), (
             f"{name} missing from user-scope Claude install"
@@ -228,6 +209,4 @@ def test_make_check_install_runs_check(installed_repo: Path) -> None:
         capture_output=True,
         text=True,
     )
-    assert dirty.returncode != 0, (
-        "make check-install passed despite a hand-edited install"
-    )
+    assert dirty.returncode != 0, "make check-install passed despite a hand-edited install"

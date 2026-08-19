@@ -78,8 +78,7 @@ def _phase4_command(flag: str) -> str:
     """
     matches = re.findall(rf"`(review/run\.sh {flag}[^`]*)`", SKILL_TEXT)
     assert len(matches) == 1, (
-        f"expected exactly one backticked `review/run.sh {flag}` command, "
-        f"found {len(matches)}"
+        f"expected exactly one backticked `review/run.sh {flag}` command, found {len(matches)}"
     )
     return matches[0]
 
@@ -130,9 +129,7 @@ def test_phases_run_red_green_refactor_review_in_order() -> None:
         "PHASE 4 - REVIEW",
     ]
     positions = [SKILL_TEXT.find(h) for h in headers]
-    assert -1 not in positions, (
-        f"missing phase header: {headers[positions.index(-1)]!r}"
-    )
+    assert -1 not in positions, f"missing phase header: {headers[positions.index(-1)]!r}"
     assert positions == sorted(positions), "phase headers out of order"
     assert re.search(r"RED -> GREEN -> REFACTOR -> REVIEW", SKILL_TEXT), (
         "the four-phase order is not stated as a constraint"
@@ -172,9 +169,7 @@ def test_review_phase_runs_the_bridge_commands() -> None:
     places and joined here.
     """
     for command in REVIEW_COMMANDS:
-        assert command in RECOVERY_INSTRUCTION, (
-            f"bridge instruction lost command: {command!r}"
-        )
+        assert command in RECOVERY_INSTRUCTION, f"bridge instruction lost command: {command!r}"
         assert command in SKILL_TEXT, f"skill missing command: {command!r}"
 
 
@@ -290,9 +285,9 @@ def test_fixer_runs_in_session() -> None:
     """
     assert re.search(
         r"reviewer-response[^.]*\b(same|this) session", SKILL_TEXT, re.IGNORECASE
-    ) or re.search(
-        r"\b(same|this) session[^.]*reviewer-response", SKILL_TEXT, re.IGNORECASE
-    ), "reviewer-response is not required to run in the same session"
+    ) or re.search(r"\b(same|this) session[^.]*reviewer-response", SKILL_TEXT, re.IGNORECASE), (
+        "reviewer-response is not required to run in the same session"
+    )
 
 
 def test_response_file_carries_the_dispositions_block() -> None:
@@ -303,11 +298,9 @@ def test_response_file_carries_the_dispositions_block() -> None:
     the complete reviewer-response output including the fenced
     dispositions block.
     """
-    assert re.search(
-        r"response file[^.]*complete", SKILL_TEXT, re.IGNORECASE
-    ) or re.search(r"complete[^.]*response file", SKILL_TEXT, re.IGNORECASE), (
-        "the response file is not required to be the complete output"
-    )
+    assert re.search(r"response file[^.]*complete", SKILL_TEXT, re.IGNORECASE) or re.search(
+        r"complete[^.]*response file", SKILL_TEXT, re.IGNORECASE
+    ), "the response file is not required to be the complete output"
     assert re.search(r"\bdispositions\b", SKILL_TEXT), (
         "the machine-readable dispositions block is never mentioned"
     )
@@ -322,9 +315,9 @@ def test_commit_message_survives_review_fixes() -> None:
     cover the review-driven changes, and the terminal summary presents
     that final form.
     """
-    assert re.search(
-        r"update[^.]*final commit message[^.]*review", SKILL_TEXT, re.IGNORECASE
-    ), "the commit message is not updated after review-driven fixes"
+    assert re.search(r"update[^.]*final commit message[^.]*review", SKILL_TEXT, re.IGNORECASE), (
+        "the commit message is not updated after review-driven fixes"
+    )
     assert "The final commit message from PHASE 3" not in SKILL_TEXT, (
         "the terminal summary still restates the pre-review message"
     )
@@ -340,9 +333,9 @@ def test_human_gate_moves_after_convergence() -> None:
     """
     assert re.search(
         r"human[^.\n]*after[^.\n]*(accept|converg)", SKILL_TEXT, re.IGNORECASE
-    ) or re.search(
-        r"(accept\w*|converg\w*)[^.\n]*before[^.\n]*human", SKILL_TEXT, re.IGNORECASE
-    ), "the human gate is not placed after convergence"
+    ) or re.search(r"(accept\w*|converg\w*)[^.\n]*before[^.\n]*human", SKILL_TEXT, re.IGNORECASE), (
+        "the human gate is not placed after convergence"
+    )
     assert re.search(r"[Oo]nly the final STOP requires human", SKILL_TEXT), (
         "the single-human-stop rule is gone"
     )
@@ -356,9 +349,7 @@ def test_commit_discipline_survives() -> None:
     commit, and the single final commit message remains the deliverable
     the human applies by hand.
     """
-    assert re.search(r"must not commit", SKILL_TEXT, re.IGNORECASE), (
-        "the no-commit rule is gone"
+    assert re.search(r"must not commit", SKILL_TEXT, re.IGNORECASE), "the no-commit rule is gone"
+    assert re.search(r"(one|single|a)\b[^.\n]*final commit message", SKILL_TEXT, re.IGNORECASE), (
+        "the single final commit message is gone"
     )
-    assert re.search(
-        r"(one|single|a)\b[^.\n]*final commit message", SKILL_TEXT, re.IGNORECASE
-    ), "the single final commit message is gone"

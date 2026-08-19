@@ -81,7 +81,7 @@ class StopProtocol:
     loop_guard_key: str
     workspaces: Callable[[dict[str, Any]], object]
     deny_decision: str
-    gate_when: Callable[[dict[str, Any]], bool] = lambda payload: True
+    gate_when: Callable[[dict[str, Any]], bool] = lambda _payload: True
 
 
 CLAUDE_STYLE = StopProtocol(

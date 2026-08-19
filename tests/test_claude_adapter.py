@@ -152,9 +152,7 @@ def envelope(
     return json.dumps(data) + "\n"
 
 
-def adapter_for(
-    home: Path, timeout: float = 30, allow_api_billing: bool = False
-) -> ClaudeAdapter:
+def adapter_for(home: Path, timeout: float = 30, allow_api_billing: bool = False) -> ClaudeAdapter:
     """A ClaudeAdapter wired to the fake binary."""
     return ClaudeAdapter(
         claude_bin=str(home / "claude"),
@@ -206,9 +204,7 @@ def test_each_fresh_review_opens_a_previously_unused_session(
     r1 = conduct_review(dirty_repo, adapter_for(home), "wip: loop one")
     r2 = conduct_review(dirty_repo, adapter_for(home), "wip: loop two")
     first, second = calls(home)
-    ids = [
-        call["argv"][call["argv"].index("--session-id") + 1] for call in (first, second)
-    ]
+    ids = [call["argv"][call["argv"].index("--session-id") + 1] for call in (first, second)]
     assert ids[0] != ids[1]
     assert all(uuid.UUID(sid).version == 4 for sid in ids)
     # The loop's thread ids ARE the generated ids - not whatever the
@@ -216,9 +212,7 @@ def test_each_fresh_review_opens_a_previously_unused_session(
     assert [r1.thread_id, r2.thread_id] == ids
 
 
-def test_unechoed_fresh_session_is_a_continuity_error(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_unechoed_fresh_session_is_a_continuity_error(dirty_repo: Path, tmp_path: Path) -> None:
     """D1: the generated id is verified against the envelope's echo, not
     trusted. A backend that answers on some other session - existing or
     unrelated - must fail the round, or a later resume would continue a
@@ -283,9 +277,7 @@ def test_allow_api_billing_opts_in(
     assert result.verdict["verdict"] == "ACCEPTED"
 
 
-def test_fresh_review_invokes_the_project_skill(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_fresh_review_invokes_the_project_skill(dirty_repo: Path, tmp_path: Path) -> None:
     """The prompt is the slash-command skill invocation plus the packet,
     pointing at the project skill path explicitly - the T3 spike found a
     user-scope copy of the same name shadows the project copy headless."""
@@ -301,9 +293,7 @@ def test_fresh_review_invokes_the_project_skill(
     assert "T11" in prompt
 
 
-def test_review_runs_inside_the_disposable_worktree(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_review_runs_inside_the_disposable_worktree(dirty_repo: Path, tmp_path: Path) -> None:
     """claude works in the T6 checkout, never the developer's tree."""
     home = install_fake_claude(tmp_path, [{"stdout": envelope(verdict_body())}])
     conduct_review(dirty_repo, adapter_for(home), "wip: worktree cwd")
@@ -334,9 +324,7 @@ def test_resume_reuses_the_prior_session(dirty_repo: Path, tmp_path: Path) -> No
     assert not argv[argv.index("-p") + 1].startswith("/skeptical-reviewer")
 
 
-def test_bare_schema_output_is_fenced_for_the_parser(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_bare_schema_output_is_fenced_for_the_parser(dirty_repo: Path, tmp_path: Path) -> None:
     """Schema-constrained output arrives as bare JSON (live probe) and is
     normalized into the fenced block form the T4 parser expects."""
     body = verdict_body()
@@ -346,9 +334,7 @@ def test_bare_schema_output_is_fenced_for_the_parser(
     assert result.raw == f"```json\n{body}\n```\n"
 
 
-def test_structured_output_is_preferred_over_result_text(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_structured_output_is_preferred_over_result_text(dirty_repo: Path, tmp_path: Path) -> None:
     """When the envelope supplies the parsed structured_output object the
     adapter uses it and ignores the result text entirely - the parsed
     object is the reliable carrier of the schema-constrained verdict."""
@@ -369,9 +355,7 @@ def test_structured_output_is_preferred_over_result_text(
     assert result.raw == f"```json\n{body}\n```\n"
 
 
-def test_prose_with_fenced_verdict_passes_verbatim(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_prose_with_fenced_verdict_passes_verbatim(dirty_repo: Path, tmp_path: Path) -> None:
     """Result text already carrying prose or a fence is not
     double-wrapped."""
     text = f"The work is sound.\n\n```json\n{verdict_body()}\n```\n"
@@ -405,25 +389,19 @@ def test_error_flag_without_error_subtype_is_a_typed_error(
 ) -> None:
     """is_error true is a failed run even if subtype still reads success -
     either signal alone must fail the round."""
-    home = install_fake_claude(
-        tmp_path, [{"stdout": envelope(verdict_body(), is_error=True)}]
-    )
+    home = install_fake_claude(tmp_path, [{"stdout": envelope(verdict_body(), is_error=True)}])
     with pytest.raises(AdapterProcessError):
         conduct_review(dirty_repo, adapter_for(home), "wip: error flag")
 
 
 def test_missing_subtype_is_a_typed_error(dirty_repo: Path, tmp_path: Path) -> None:
     """An envelope with no subtype cannot prove the run succeeded."""
-    home = install_fake_claude(
-        tmp_path, [{"stdout": envelope(verdict_body(), subtype=None)}]
-    )
+    home = install_fake_claude(tmp_path, [{"stdout": envelope(verdict_body(), subtype=None)}])
     with pytest.raises(AdapterProcessError, match=r"\(none\)"):
         conduct_review(dirty_repo, adapter_for(home), "wip: no subtype")
 
 
-def test_empty_result_is_an_empty_output_error(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_empty_result_is_an_empty_output_error(dirty_repo: Path, tmp_path: Path) -> None:
     """A successful run with empty result text is R1's empty output:
     never repaired, never recorded as a pass."""
     home = install_fake_claude(tmp_path, [{"stdout": envelope("")}])
@@ -447,9 +425,7 @@ def test_null_result_is_a_typed_error(dirty_repo: Path, tmp_path: Path) -> None:
         conduct_review(dirty_repo, adapter_for(home), "wip: null result")
 
 
-def test_unparseable_envelope_is_a_typed_error(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_unparseable_envelope_is_a_typed_error(dirty_repo: Path, tmp_path: Path) -> None:
     """Stdout that is not a JSON envelope is a transport failure."""
     home = install_fake_claude(tmp_path, [{"stdout": "not an envelope\n"}])
     with pytest.raises(AdapterProcessError):
@@ -467,9 +443,7 @@ def test_non_object_envelope_is_a_typed_error(
         conduct_review(dirty_repo, adapter_for(home), "wip: non-object")
 
 
-def test_backend_nonzero_exit_is_a_typed_error(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_backend_nonzero_exit_is_a_typed_error(dirty_repo: Path, tmp_path: Path) -> None:
     """A dying claude (probed live: an unknown --resume id exits 1 with
     stderr only) surfaces as AdapterProcessError carrying that stderr."""
     home = install_fake_claude(
@@ -493,9 +467,7 @@ def test_missing_binary_is_a_typed_error(dirty_repo: Path, tmp_path: Path) -> No
         conduct_review(dirty_repo, adapter, "wip: missing binary")
 
 
-def test_non_executable_binary_is_a_typed_error(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_non_executable_binary_is_a_typed_error(dirty_repo: Path, tmp_path: Path) -> None:
     """Any spawn failure is a transport failure: a configured binary that
     exists but lacks the exec bit must not escape as raw PermissionError."""
     binary = tmp_path / "claude-no-exec-bit"
@@ -506,34 +478,24 @@ def test_non_executable_binary_is_a_typed_error(
         conduct_review(dirty_repo, adapter, "wip: unspawnable binary")
 
 
-def test_hung_backend_is_killed_into_a_typed_error(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_hung_backend_is_killed_into_a_typed_error(dirty_repo: Path, tmp_path: Path) -> None:
     """A hung claude is killed into a typed error, never a hang."""
-    home = install_fake_claude(
-        tmp_path, [{"sleep": 30, "stdout": envelope(verdict_body())}]
-    )
+    home = install_fake_claude(tmp_path, [{"sleep": 30, "stdout": envelope(verdict_body())}])
     start = time.monotonic()
     with pytest.raises(AdapterProcessError, match="[Tt]ime"):
         conduct_review(dirty_repo, adapter_for(home, timeout=1), "wip: hung backend")
     assert time.monotonic() - start < 15
 
 
-def test_backend_cannot_wait_on_the_callers_stdin(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_backend_cannot_wait_on_the_callers_stdin(dirty_repo: Path, tmp_path: Path) -> None:
     """A caller whose stdin never closes (a hook, a wrapper script) must
     not stall the review: the backend gets /dev/null, not our stdin."""
-    home = install_fake_claude(
-        tmp_path, [{"read_stdin": True, "stdout": envelope(verdict_body())}]
-    )
+    home = install_fake_claude(tmp_path, [{"read_stdin": True, "stdout": envelope(verdict_body())}])
     read_end, write_end = os.pipe()
     saved = os.dup(0)
     os.dup2(read_end, 0)
     try:
-        result = conduct_review(
-            dirty_repo, adapter_for(home, timeout=5), "wip: open stdin"
-        )
+        result = conduct_review(dirty_repo, adapter_for(home, timeout=5), "wip: open stdin")
     finally:
         os.dup2(saved, 0)
         for fd in (saved, read_end, write_end):
@@ -546,16 +508,12 @@ def test_envelope_without_session_id_is_a_continuity_error(
 ) -> None:
     """No session id means the review can never be resumed (D1) - the
     envelope's answer is verified, never assumed from the id we sent."""
-    home = install_fake_claude(
-        tmp_path, [{"stdout": envelope(verdict_body(), session=None)}]
-    )
+    home = install_fake_claude(tmp_path, [{"stdout": envelope(verdict_body(), session=None)}])
     with pytest.raises(ThreadContinuityError):
         conduct_review(dirty_repo, adapter_for(home), "wip: no session")
 
 
-def test_non_string_session_id_is_a_continuity_error(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_non_string_session_id_is_a_continuity_error(dirty_repo: Path, tmp_path: Path) -> None:
     """D1: a session id that is not a string can never be resumed (and
     would poison a later resume argv), so it degrades exactly like a
     missing one - ThreadContinuityError, never a leaked integer."""
@@ -631,9 +589,7 @@ def test_costs_are_recorded_into_review_state(dirty_repo: Path, tmp_path: Path) 
     )
 
 
-def test_missing_telemetry_records_no_cost_entry(
-    dirty_repo: Path, tmp_path: Path
-) -> None:
+def test_missing_telemetry_records_no_cost_entry(dirty_repo: Path, tmp_path: Path) -> None:
     """An envelope reporting neither cost nor usage contributes no
     entry - never a {None, None} placeholder polluting review state."""
     stdout = (

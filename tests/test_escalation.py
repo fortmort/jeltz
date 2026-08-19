@@ -117,9 +117,7 @@ def test_round_cap_dossier_lists_only_active_blockers() -> None:
 
 def test_round_cap_acceptance_is_not_escalated() -> None:
     """An accepting round three terminates normally, not via escalation."""
-    verdict = verdict_obj(
-        "ACCEPTED", round_number=3, blockers=[finding("b1", "resolved")]
-    )
+    verdict = verdict_obj("ACCEPTED", round_number=3, blockers=[finding("b1", "resolved")])
     assert evaluate(state_obj(verdict)) is None
 
 
@@ -140,9 +138,7 @@ def test_fixed_blocker_coming_back_is_thrash(comeback: str | None) -> None:
 
 def test_fixed_blocker_resolved_is_not_thrash() -> None:
     """A fixed claim the reviewer confirms resolved is the success path."""
-    verdict = verdict_obj(
-        "ACCEPTED", round_number=2, blockers=[finding("b1", "resolved")]
-    )
+    verdict = verdict_obj("ACCEPTED", round_number=2, blockers=[finding("b1", "resolved")])
     response = response_obj(1, [disp("b1", "fixed", "guarded the symlink path")])
     assert evaluate(state_obj(verdict), response) is None
 
@@ -159,9 +155,7 @@ def test_regression_without_a_response_is_still_thrash() -> None:
 def test_rejected_blocker_reasserted_is_a_dispute() -> None:
     """Condition 3: rejection vs re-assertion needs a human tiebreak."""
     verdict = verdict_obj(round_number=2, blockers=[finding("b1", "unresolved")])
-    response = response_obj(
-        1, [disp("b1", "rejected-invalid", "os.walk meets CLAUDE.md norms")]
-    )
+    response = response_obj(1, [disp("b1", "rejected-invalid", "os.walk meets CLAUDE.md norms")])
     escalation = evaluate(state_obj(verdict), response)
     assert escalation is not None
     assert escalation.conditions == (3,)
@@ -176,9 +170,7 @@ def test_rejected_blocker_relisted_as_resolved_still_disputes() -> None:
     """The T5 contract: a rejected-invalid id coming back AT ALL is
     condition 3. Listing a rejected id as resolved claims a fix that never
     happened; the contradiction needs a human, not another round."""
-    verdict = verdict_obj(
-        "ACCEPTED", round_number=2, blockers=[finding("b1", "resolved")]
-    )
+    verdict = verdict_obj("ACCEPTED", round_number=2, blockers=[finding("b1", "resolved")])
     response = response_obj(1, [disp("b1", "rejected-invalid", "not a defect")])
     escalation = evaluate(state_obj(verdict), response)
     assert escalation is not None
@@ -267,9 +259,7 @@ _TWO_BLOCKS = (
         json.dumps({"schema_version": 1, "round": "1", "dispositions": []}),
         json.dumps({"schema_version": 1, "round": 1, "dispositions": {}}),
         json.dumps(response_obj(1, [disp("b1", "wontfix", "nah")])),
-        json.dumps(
-            response_obj(1, [disp("b1", "fixed", "x"), disp("b1", "fixed", "y")])
-        ),
+        json.dumps(response_obj(1, [disp("b1", "fixed", "x"), disp("b1", "fixed", "y")])),
         json.dumps(response_obj(1, [{"id": "b1", "disposition": "fixed"}])),
         json.dumps(response_obj(1, [disp("", "fixed", "x")])),
         json.dumps(response_obj(1, [42])),
@@ -319,9 +309,7 @@ def test_verify_coverage_rejects_missing_ids() -> None:
 def test_verify_coverage_rejects_unknown_ids() -> None:
     """An id the verdict never raised has no finding to answer."""
     verdict = verdict_obj(blockers=[finding("b1")])
-    response = response_obj(
-        1, [disp("b1", "fixed", "patched"), disp("ghost", "fixed", "what")]
-    )
+    response = response_obj(1, [disp("b1", "fixed", "patched"), disp("ghost", "fixed", "what")])
     with pytest.raises(ResponseError, match="ghost"):
         verify_coverage(response, verdict)
 
@@ -329,9 +317,7 @@ def test_verify_coverage_rejects_unknown_ids() -> None:
 def test_dossier_names_the_specific_disagreement() -> None:
     """The dossier carries the id, both positions, and the round history."""
     verdict = verdict_obj(round_number=2, blockers=[finding("b1", "unresolved")])
-    response = response_obj(
-        1, [disp("b1", "rejected-invalid", "os.walk meets CLAUDE.md norms")]
-    )
+    response = response_obj(1, [disp("b1", "rejected-invalid", "os.walk meets CLAUDE.md norms")])
     escalation = evaluate(state_obj(verdict), response)
     assert escalation is not None
     history = [

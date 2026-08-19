@@ -8,8 +8,9 @@ other failure mode is repairable exactly once via ``parse_with_repair``.
 
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import jsonschema
 
@@ -136,9 +137,7 @@ def _check_semantics(data: dict[str, Any]) -> None:
     blockers = data["blockers"]
     non_blockers = data["non_blockers"]
     rereview = data["round"] > 1
-    active = [
-        f for f in blockers if not (rereview and f.get("disposition") == "resolved")
-    ]
+    active = [f for f in blockers if not (rereview and f.get("disposition") == "resolved")]
     if verdict == "REQUIRES_CHANGES":
         if not active:
             raise SemanticViolationError("REQUIRES_CHANGES with no active blockers")
@@ -151,9 +150,7 @@ def _check_semantics(data: dict[str, Any]) -> None:
     ids = [finding["id"] for finding in blockers + non_blockers]
     duplicates = {i for i in ids if ids.count(i) > 1}
     if duplicates:
-        raise SemanticViolationError(
-            f"finding ids reused within the review: {sorted(duplicates)}"
-        )
+        raise SemanticViolationError(f"finding ids reused within the review: {sorted(duplicates)}")
 
 
 def strict_schema() -> dict[str, Any]:
@@ -221,9 +218,7 @@ def parse_verdict(text: str) -> dict[str, Any]:
     if not candidates:
         if parse_errors:
             raise InvalidVerdictJSONError(parse_errors[0])
-        raise MissingVerdictBlockError(
-            "no fenced JSON block carries a schema_version key"
-        )
+        raise MissingVerdictBlockError("no fenced JSON block carries a schema_version key")
     if len(candidates) > 1:
         raise MultipleVerdictBlocksError(
             f"{len(candidates)} verdict-shaped blocks; expected exactly one"
@@ -260,8 +255,7 @@ def parse_with_repair(
         data = parse_verdict(candidate)
         if expected_round is not None and data["round"] != expected_round:
             raise WrongRoundError(
-                f"verdict declares round {data['round']}, "
-                f"but this is review round {expected_round}"
+                f"verdict declares round {data['round']}, but this is review round {expected_round}"
             )
         return data
 

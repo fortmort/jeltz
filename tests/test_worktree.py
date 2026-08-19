@@ -65,10 +65,12 @@ def test_worktree_is_destroyed_on_clean_exit(dirty_repo: Path) -> None:
 
 def test_worktree_is_destroyed_on_crash(dirty_repo: Path) -> None:
     """Cleanup is guaranteed when the review loop dies mid-flight."""
-    with pytest.raises(RuntimeError, match="boom"):
-        with review_worktree(dirty_repo, "wip: crash") as worktree:
-            kept = worktree
-            raise RuntimeError("boom")
+    with (
+        pytest.raises(RuntimeError, match="boom"),
+        review_worktree(dirty_repo, "wip: crash") as worktree,
+    ):
+        kept = worktree
+        raise RuntimeError("boom")
     assert not kept.exists()
     assert str(kept) not in git(dirty_repo, "worktree", "list")
 

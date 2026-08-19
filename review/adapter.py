@@ -85,9 +85,7 @@ def fence_bare_verdict(raw: str) -> str:
     return raw
 
 
-def run_backend(
-    host: str, argv: list[str], worktree: Path, timeout: float
-) -> tuple[str, str]:
+def run_backend(host: str, argv: list[str], worktree: Path, timeout: float) -> tuple[str, str]:
     """Execute a reviewer backend CLI, mapping every transport failure to
     a typed error (D6: every adapter is a subprocess transport).
 
@@ -118,17 +116,11 @@ def run_backend(
         # FileNotFoundError, PermissionError, and every other spawn
         # failure: the binary never ran, so this is transport, not
         # verdict (T7 typed-error contract).
-        raise AdapterProcessError(
-            f"{host} could not be spawned ({argv[0]}): {exc}"
-        ) from exc
+        raise AdapterProcessError(f"{host} could not be spawned ({argv[0]}): {exc}") from exc
     except subprocess.TimeoutExpired as exc:
-        raise AdapterProcessError(
-            f"{host} timed out after {timeout}s and was killed"
-        ) from exc
+        raise AdapterProcessError(f"{host} timed out after {timeout}s and was killed") from exc
     if proc.returncode != 0:
-        raise AdapterProcessError(
-            f"{host} exited {proc.returncode}: {proc.stderr.strip()}"
-        )
+        raise AdapterProcessError(f"{host} exited {proc.returncode}: {proc.stderr.strip()}")
     return proc.stdout, proc.stderr
 
 
@@ -140,9 +132,7 @@ def telemetry(data: dict[str, Any]) -> dict[str, Any]:
     telemetry-free envelope yields an empty dict and no cost entry.
     """
     return {
-        key: value
-        for key in ("total_cost_usd", "usage")
-        if (value := data.get(key)) is not None
+        key: value for key in ("total_cost_usd", "usage") if (value := data.get(key)) is not None
     }
 
 
@@ -185,9 +175,7 @@ class ReviewerAdapter(ABC):
         self._round_costs.append(entry)
 
     @abstractmethod
-    def _send(
-        self, prompt: str, worktree: Path, thread_id: str | None
-    ) -> tuple[str, str]:
+    def _send(self, prompt: str, worktree: Path, thread_id: str | None) -> tuple[str, str]:
         """Send one prompt to the reviewer and return its output.
 
         Args:

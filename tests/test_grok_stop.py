@@ -89,9 +89,7 @@ def run_hook(monkeypatch: pytest.MonkeyPatch, payload: str) -> int:
     return main()
 
 
-def stop_payload(
-    repo: Path, *, reason: str = "end_turn", stop_hook_active: bool = False
-) -> str:
+def stop_payload(repo: Path, *, reason: str = "end_turn", stop_hook_active: bool = False) -> str:
     """A grok Stop-hook input payload for the given repo.
 
     Mirrors a live capture from grok 1.0.4: camelCase fields,
@@ -148,9 +146,7 @@ def test_denied_stop_emits_the_documented_decision(
     assert "review/run.sh --new" in output["reason"]
 
 
-def test_denial_is_recorded_through_the_bridge(
-    repo: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_denial_is_recorded_through_the_bridge(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The shim's denial arms the bridge's repeat guard for this tree."""
     (repo / "src.py").write_text("VALUE = 2\n")
     run_hook(monkeypatch, stop_payload(repo))
@@ -229,9 +225,7 @@ def test_missing_workspace_fails_open(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A payload without a usable workspace root allows with a logged error."""
-    payload = json.dumps(
-        {"reason": "end_turn", "stopHookActive": False, "workspaceRoot": ""}
-    )
+    payload = json.dumps({"reason": "end_turn", "stopHookActive": False, "workspaceRoot": ""})
     with caplog.at_level(logging.ERROR):
         assert run_hook(monkeypatch, payload) == 0
     assert capsys.readouterr().out == ""

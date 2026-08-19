@@ -198,9 +198,7 @@ def test_resume_continues_recorded_thread(
 ) -> None:
     """--resume re-reviews on the recorded thread and appends history."""
     requires = verdict_obj("REQUIRES_CHANGES", blockers=[finding("b1")])
-    accepted = verdict_obj(
-        "ACCEPTED", round_number=2, blockers=[finding("b1", "resolved")]
-    )
+    accepted = verdict_obj("ACCEPTED", round_number=2, blockers=[finding("b1", "resolved")])
     home = install_fake_codex(
         tmp_path,
         [{"stdout": events(requires)}, {"stdout": events(accepted)}],
@@ -357,9 +355,7 @@ def test_reviewer_edit_discards_verdict(
     capsys: pytest.CaptureFixture,
 ) -> None:
     """A tampered checkout exits 1 even over an accepting verdict (R7)."""
-    home = install_fake_codex(
-        tmp_path, [{"stdout": events(verdict_obj()), "write": "src.py"}]
-    )
+    home = install_fake_codex(tmp_path, [{"stdout": events(verdict_obj()), "write": "src.py"}])
     code = run_main(monkeypatch, home, ["--new", "--repo", str(dirty_repo)])
     assert code == 1
     assert "review checkout" in capsys.readouterr().err
@@ -462,9 +458,7 @@ def test_new_rejects_round_smuggled_dispositions(
     turn unresolved blockers into an exit-0 acceptance. The mismatch gets
     the one same-thread repair; a reviewer that insists fails the round.
     """
-    smuggled = verdict_obj(
-        "ACCEPTED", round_number=2, blockers=[finding("b1", "resolved")]
-    )
+    smuggled = verdict_obj("ACCEPTED", round_number=2, blockers=[finding("b1", "resolved")])
     home = install_fake_codex(
         tmp_path,
         [{"stdout": events(smuggled)}, {"stdout": events(smuggled)}],
@@ -481,9 +475,7 @@ def test_round_mismatch_is_repaired_on_the_same_thread(
     dirty_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A wrong-round verdict that is corrected on repair completes the round."""
-    smuggled = verdict_obj(
-        "ACCEPTED", round_number=2, blockers=[finding("b1", "resolved")]
-    )
+    smuggled = verdict_obj("ACCEPTED", round_number=2, blockers=[finding("b1", "resolved")])
     corrected = verdict_obj("REQUIRES_CHANGES", blockers=[finding("b1")])
     home = install_fake_codex(
         tmp_path,
@@ -506,9 +498,7 @@ def test_resume_rejects_wrong_round_verdict(
 ) -> None:
     """A resumed round must come back as round 2, or the round fails."""
     requires = verdict_obj("REQUIRES_CHANGES", blockers=[finding("b1")])
-    wrong = verdict_obj(
-        "ACCEPTED", round_number=5, blockers=[finding("b1", "resolved")]
-    )
+    wrong = verdict_obj("ACCEPTED", round_number=5, blockers=[finding("b1", "resolved")])
     home = install_fake_codex(
         tmp_path,
         [
@@ -636,9 +626,7 @@ def test_round_cap_escalates_after_three_failing_rounds(
     home = install_fake_codex(tmp_path, [{"stdout": events(v)} for v in rounds])
     assert run_main(monkeypatch, home, ["--new", "--repo", str(dirty_repo)]) == 10
     first = tmp_path / "response1.md"
-    first.write_text(
-        response_text(1, [{"id": "b1", "disposition": "fixed", "reason": "patched"}])
-    )
+    first.write_text(response_text(1, [{"id": "b1", "disposition": "fixed", "reason": "patched"}]))
     args = ["--resume", "--repo", str(dirty_repo), "--response-file", str(first)]
     assert run_main(monkeypatch, home, args) == 10
     second = tmp_path / "response2.md"
@@ -783,9 +771,7 @@ def test_resume_after_escalation_is_refused(
     )
     assert run_main(monkeypatch, home, ["--new", "--repo", str(dirty_repo)]) == 10
     first = tmp_path / "response1.md"
-    first.write_text(
-        response_text(1, [{"id": "b1", "disposition": "fixed", "reason": "patched"}])
-    )
+    first.write_text(response_text(1, [{"id": "b1", "disposition": "fixed", "reason": "patched"}]))
     args = ["--resume", "--repo", str(dirty_repo), "--response-file", str(first)]
     assert run_main(monkeypatch, home, args) == 10
     second = tmp_path / "response2.md"
@@ -863,10 +849,7 @@ def test_remediation_response_must_cover_every_finding(
     response.write_text(
         response_text(
             1,
-            [
-                {"id": fid, "disposition": "fixed", "reason": "patched"}
-                for fid in answered
-            ],
+            [{"id": fid, "disposition": "fixed", "reason": "patched"} for fid in answered],
         )
     )
     code = run_main(
@@ -910,7 +893,6 @@ def test_wip_message_file_preserves_hostile_content(
     dirty_repo: Path,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture,
 ) -> None:
     """--wip-message-file transports the message byte-for-byte.
 
@@ -959,9 +941,7 @@ def test_wip_message_file_unreadable_fails(
     assert not state_path(dirty_repo).exists()
 
 
-def test_wip_message_flags_are_exclusive(
-    dirty_repo: Path, capsys: pytest.CaptureFixture
-) -> None:
+def test_wip_message_flags_are_exclusive(dirty_repo: Path, capsys: pytest.CaptureFixture) -> None:
     """--wip-message and --wip-message-file cannot be combined."""
     with pytest.raises(SystemExit) as excinfo:
         main(

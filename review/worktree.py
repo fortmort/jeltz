@@ -109,9 +109,7 @@ def snapshot(worktree: Path) -> Snapshot:
     Returns:
         The HEAD commit and the set of untracked (and ignored) paths.
     """
-    untracked = frozenset(
-        path for code, path in _listing(worktree) if code in _UNTRACKED_CODES
-    )
+    untracked = frozenset(path for code, path in _listing(worktree) if code in _UNTRACKED_CODES)
     return Snapshot(
         head=git(worktree, "rev-parse", "HEAD").strip(),
         tracked=_tracked_state(worktree),
@@ -142,17 +140,11 @@ def verify_integrity(worktree: Path, before: Snapshot) -> None:
         elif path not in before.untracked and not _allowlisted(path):
             novel.append(path)
     if mutated:
-        raise IntegrityError(
-            f"tracked files mutated in review checkout: {sorted(mutated)}"
-        )
+        raise IntegrityError(f"tracked files mutated in review checkout: {sorted(mutated)}")
     if novel:
-        raise IntegrityError(
-            f"novel untracked writes in review checkout: {sorted(novel)}"
-        )
+        raise IntegrityError(f"novel untracked writes in review checkout: {sorted(novel)}")
     changed = sorted(
-        path
-        for path in before.tracked
-        if _fingerprint(worktree / path) != before.tracked[path]
+        path for path in before.tracked if _fingerprint(worktree / path) != before.tracked[path]
     )
     if changed:
         raise IntegrityError(f"tracked content mutated in review checkout: {changed}")

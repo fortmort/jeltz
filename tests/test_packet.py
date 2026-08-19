@@ -47,12 +47,8 @@ def test_todo_ref_is_optional(dirty_repo: Path) -> None:
 
 def test_packet_is_deterministic(dirty_repo: Path) -> None:
     """Identical tree state and inputs produce an identical packet."""
-    first = build_packet(
-        dirty_repo, wip_message="wip: same", todo_ref="T6", verify_output="ok\n"
-    )
-    second = build_packet(
-        dirty_repo, wip_message="wip: same", todo_ref="T6", verify_output="ok\n"
-    )
+    first = build_packet(dirty_repo, wip_message="wip: same", todo_ref="T6", verify_output="ok\n")
+    second = build_packet(dirty_repo, wip_message="wip: same", todo_ref="T6", verify_output="ok\n")
     assert first == second
     assert first.diff_hash == second.diff_hash
     assert first.render() == second.render()
@@ -125,9 +121,7 @@ def test_clean_tree_builds_an_empty_but_stable_packet(dirty_repo: Path) -> None:
 def test_verify_tail_keeps_only_the_last_lines(dirty_repo: Path) -> None:
     """Long verify output is truncated to its tail, where failures land."""
     lines = [f"line {i}" for i in range(VERIFY_TAIL_LINES * 3)]
-    packet = build_packet(
-        dirty_repo, wip_message="wip: tail", verify_output="\n".join(lines)
-    )
+    packet = build_packet(dirty_repo, wip_message="wip: tail", verify_output="\n".join(lines))
     tail = packet.verify_tail.splitlines()
     assert len(tail) == VERIFY_TAIL_LINES
     assert tail[-1] == lines[-1]

@@ -72,9 +72,7 @@ def test_reads_project_norms_first() -> None:
 
 def test_ref_argument_defaults_to_head() -> None:
     """The review target is a git ref argument defaulting to HEAD."""
-    assert re.search(r"\bref\b", SKILL_TEXT, re.IGNORECASE), (
-        "no mention of a ref argument"
-    )
+    assert re.search(r"\bref\b", SKILL_TEXT, re.IGNORECASE), "no mention of a ref argument"
     assert re.search(r"\bdefault\w*\b[^.\n]*\bHEAD\b", SKILL_TEXT), (
         "HEAD is not documented as the default ref"
     )
@@ -89,9 +87,7 @@ def test_uncommitted_mode_documented() -> None:
     assert re.search(r"\buncommitted\b", SKILL_TEXT, re.IGNORECASE), (
         "no uncommitted-changes review mode"
     )
-    assert "git diff HEAD" in SKILL_TEXT, (
-        "uncommitted mode does not define its diff source"
-    )
+    assert "git diff HEAD" in SKILL_TEXT, "uncommitted mode does not define its diff source"
     assert re.search(r"\buntracked\b", SKILL_TEXT, re.IGNORECASE), (
         "uncommitted mode does not cover untracked files"
     )
@@ -130,9 +126,9 @@ def test_rereview_does_not_suppress_preexisting_blockers() -> None:
     assert "introduced by the amendment" not in SKILL_TEXT, (
         "re-review restricts new blockers to amendment-introduced ones"
     )
-    assert re.search(
-        r"unless they\s+are genuine blockers", SKILL_TEXT, re.IGNORECASE
-    ), "re-review does not admit genuine new blockers"
+    assert re.search(r"unless they\s+are genuine blockers", SKILL_TEXT, re.IGNORECASE), (
+        "re-review does not admit genuine new blockers"
+    )
 
 
 def test_blocker_ids_stable_across_rounds() -> None:
@@ -147,7 +143,7 @@ def test_verdict_block_example_parses() -> None:
     verdicts = _example_verdicts()
     assert verdicts, "no fenced JSON verdict example with schema_version"
     for verdict in verdicts:
-        assert VERDICT_TOP_KEYS <= verdict.keys(), (
+        assert VERDICT_TOP_KEYS.issubset(verdict.keys()), (
             f"verdict example missing keys: {VERDICT_TOP_KEYS - verdict.keys()}"
         )
 
@@ -168,12 +164,12 @@ def test_all_four_hosts_emitted_valid_verdicts() -> None:
     )
     for path in sorted(fixture_dir.glob("*.json")):
         verdict = json.loads(path.read_text())
-        assert VERDICT_TOP_KEYS <= verdict.keys(), (
+        assert VERDICT_TOP_KEYS.issubset(verdict.keys()), (
             f"{path.name} missing keys: {VERDICT_TOP_KEYS - verdict.keys()}"
         )
         assert verdict["blockers"], f"{path.name} found no blockers in the fixture"
         for blocker in verdict["blockers"]:
-            assert BLOCKER_KEYS <= blocker.keys(), (
+            assert BLOCKER_KEYS.issubset(blocker.keys()), (
                 f"{path.name} blocker missing: {BLOCKER_KEYS - blocker.keys()}"
             )
 
@@ -184,6 +180,6 @@ def test_verdict_example_blockers_carry_required_fields() -> None:
     blockers = [b for v in verdicts for b in v.get("blockers", [])]
     assert blockers, "no verdict example demonstrates a populated blocker"
     for blocker in blockers:
-        assert BLOCKER_KEYS <= blocker.keys(), (
+        assert BLOCKER_KEYS.issubset(blocker.keys()), (
             f"blocker example missing keys: {BLOCKER_KEYS - blocker.keys()}"
         )

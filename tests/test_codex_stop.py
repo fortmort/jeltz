@@ -112,9 +112,7 @@ def test_denied_stop_emits_the_documented_decision(
     assert "review/run.sh --new" in output["reason"]
 
 
-def test_denial_is_recorded_through_the_bridge(
-    repo: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_denial_is_recorded_through_the_bridge(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The shim's denial arms the bridge's repeat guard for this tree."""
     (repo / "src.py").write_text("VALUE = 2\n")
     run_hook(monkeypatch, stop_payload(repo))

@@ -5,28 +5,22 @@ production dependencies the shipped review engine needs wherever it runs
 (a consumer repo included, per T33) and a dev group for developing jeltz
 itself. requirements-dev.txt is retired.
 
-The packaging file must not carry a ``[tool.ruff]`` section yet. A TRACKED
-ruff config flips hooks/lib/repo-mode.sh to whole-file (strict) enforcement
-for this entire tree, so config and full-rules compliance land together in
-T24 rather than arriving as a packaging side effect.
-
-What this file does NOT cover: how the declared dependencies get installed.
-That moved to tests/test_provisioning.py when T23 replaced pip with uv.
+What this file does NOT cover: how the declared dependencies get installed
+(that moved to tests/test_provisioning.py when T23 replaced pip with uv), and
+the lint standard the same file declares. T22 asserted here that the file
+carried no ``[tool.ruff]`` section and left this tree on diff-scoped hook
+enforcement; T24 deliberately reversed both, so those two facts and their
+tests now live in tests/test_lint_standard.py.
 """
 
 import re
-import shutil
-import subprocess
 import tomllib
 from pathlib import Path
 
 import pytest
 
-from tests.conftest import git
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PYPROJECT = REPO_ROOT / "pyproject.toml"
-REPO_MODE_LIB = REPO_ROOT / "hooks" / "lib" / "repo-mode.sh"
 
 # The dependency group carrying tooling used to develop jeltz itself.
 DEV_GROUP = "dev"
@@ -46,9 +40,7 @@ def _requirement_names(specs: list[str]) -> set[str]:
         The lower-cased distribution names, with version specifiers, extras,
         and environment markers stripped.
     """
-    return {
-        re.split(r"[<>=!~;\[\s]", spec, maxsplit=1)[0].strip().lower() for spec in specs
-    }
+    return {re.split(r"[<>=!~;\[\s]", spec, maxsplit=1)[0].strip().lower() for spec in specs}
 
 
 @pytest.fixture(scope="module")
@@ -109,49 +101,9 @@ def test_development_tooling_is_confined_to_the_dev_group(
     production_deps: set[str], dev_deps: set[str]
 ) -> None:
     """The test tooling is declared for developers and only for developers."""
-    assert DEV_ONLY <= dev_deps, f"dev group is missing {DEV_ONLY - dev_deps}"
+    assert DEV_ONLY.issubset(dev_deps), f"dev group is missing {DEV_ONLY - dev_deps}"
     assert not (DEV_ONLY & production_deps), (
         f"test tooling leaked into production dependencies: {DEV_ONLY & production_deps}"
-    )
-
-
-def test_pyproject_carries_no_ruff_config(pyproject: dict) -> None:
-    """No ``[tool.ruff]`` section ships before T24's full-rules compliance."""
-    assert "ruff" not in pyproject.get("tool", {}), (
-        "a tracked [tool.ruff] section promotes this tree to strict hook "
-        "enforcement; it belongs with T24's cleanup, not with packaging"
-    )
-
-
-def test_committing_this_pyproject_leaves_repo_mode_diff(tmp_path: Path) -> None:
-    """A tree gaining this pyproject.toml stays on diff-scoped enforcement."""
-    repo = (tmp_path / "consumer").resolve()
-    repo.mkdir()
-    git(repo, "init", "-b", "main")
-    git(repo, "config", "user.name", "Fixture")
-    git(repo, "config", "user.email", "fixture@example.invalid")
-    git(repo, "config", "commit.gpgsign", "false")
-    shutil.copy(PYPROJECT, repo / "pyproject.toml")
-    (repo / "sample.py").write_text("VALUE = 1\n")
-    git(repo, "add", "-A")
-    git(repo, "commit", "-m", "chore: packaging baseline")
-
-    probe = subprocess.run(
-        [
-            "bash",
-            "-c",
-            'set -eu; . "$1"; hook_repo_mode "$2"',
-            "probe",
-            str(REPO_MODE_LIB),
-            str(repo / "sample.py"),
-        ],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-    )
-    assert probe.returncode == 0, probe.stderr
-    assert probe.stdout.strip() == "diff", (
-        f"committing pyproject.toml flipped the tree to {probe.stdout.strip()!r}"
     )
 
 

@@ -37,9 +37,7 @@ DEFAULT_TIMEOUT = 600.0
 class GrokAdapter(ReviewerAdapter):
     """Reviewer backend running `grok -p` against the discovered skill."""
 
-    def __init__(
-        self, grok_bin: str = "grok", timeout: float = DEFAULT_TIMEOUT
-    ) -> None:
+    def __init__(self, grok_bin: str = "grok", timeout: float = DEFAULT_TIMEOUT) -> None:
         """Configure the backend invocation.
 
         Args:
@@ -49,9 +47,7 @@ class GrokAdapter(ReviewerAdapter):
         self.grok_bin = grok_bin
         self.timeout = timeout
 
-    def _send(
-        self, prompt: str, worktree: Path, thread_id: str | None
-    ) -> tuple[str, str]:
+    def _send(self, prompt: str, worktree: Path, thread_id: str | None) -> tuple[str, str]:
         """Run one grok single-prompt turn and return its output and thread id.
 
         Args:
@@ -163,9 +159,7 @@ def _parse_envelope(stdout: str, stderr: str) -> tuple[str, str, dict[str, Any]]
             f"grok emitted an unparseable envelope: {stdout.strip()[:200]}"
         ) from exc
     if not isinstance(data, dict):
-        raise AdapterProcessError(
-            f"grok envelope is not an object: {stdout.strip()[:200]}"
-        )
+        raise AdapterProcessError(f"grok envelope is not an object: {stdout.strip()[:200]}")
     stop = data.get("stopReason", "")
     text = data.get("text", "")
     if stop != "end_turn":
@@ -181,9 +175,7 @@ def _parse_envelope(stdout: str, stderr: str) -> tuple[str, str, dict[str, Any]]
         # the only reliable carrier of the schema-constrained verdict.
         text = json.dumps(structured)
     elif not isinstance(text, str):
-        raise AdapterProcessError(
-            f"grok envelope text is not a string: {stdout.strip()[:200]}"
-        )
+        raise AdapterProcessError(f"grok envelope text is not a string: {stdout.strip()[:200]}")
     session = data.get("sessionId", "")
     if not isinstance(session, str):
         # A non-string id can never be resumed (and would poison a later

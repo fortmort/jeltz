@@ -58,9 +58,7 @@ class ClaudeAdapter(ReviewerAdapter):
         self.timeout = timeout
         self.allow_api_billing = allow_api_billing
 
-    def _send(
-        self, prompt: str, worktree: Path, thread_id: str | None
-    ) -> tuple[str, str]:
+    def _send(self, prompt: str, worktree: Path, thread_id: str | None) -> tuple[str, str]:
         """Run one claude single-prompt turn and return its output and id.
 
         Args:
@@ -147,9 +145,7 @@ def _parse_envelope(stdout: str, stderr: str) -> tuple[str, str, dict[str, Any]]
             f"claude emitted an unparseable envelope: {stdout.strip()[:200]}"
         ) from exc
     if not isinstance(data, dict):
-        raise AdapterProcessError(
-            f"claude envelope is not an object: {stdout.strip()[:200]}"
-        )
+        raise AdapterProcessError(f"claude envelope is not an object: {stdout.strip()[:200]}")
     subtype = data.get("subtype", "")
     text = data.get("result", "")
     if data.get("is_error") or subtype != "success":
@@ -162,9 +158,7 @@ def _parse_envelope(stdout: str, stderr: str) -> tuple[str, str, dict[str, Any]]
     if isinstance(structured, dict):
         text = json.dumps(structured)
     elif not isinstance(text, str):
-        raise AdapterProcessError(
-            f"claude envelope result is not a string: {stdout.strip()[:200]}"
-        )
+        raise AdapterProcessError(f"claude envelope result is not a string: {stdout.strip()[:200]}")
     session = data.get("session_id", "")
     if not isinstance(session, str):
         # A non-string id can never be resumed (and would poison a later

@@ -58,9 +58,7 @@ class FakeAdapter(ReviewerAdapter):
         self.on_send = on_send
         self.thread_ids = list(thread_ids) if thread_ids is not None else None
 
-    def _send(
-        self, prompt: str, worktree: Path, thread_id: str | None
-    ) -> tuple[str, str]:
+    def _send(self, prompt: str, worktree: Path, thread_id: str | None) -> tuple[str, str]:
         self.sent.append((prompt, thread_id))
         if self.on_send is not None:
             self.on_send(worktree)
@@ -141,9 +139,7 @@ def test_new_mode_rejects_a_stale_thread_id(dirty_repo: Path) -> None:
     """A fresh review on an old thread would leak prior context."""
     fake = FakeAdapter([verdict_text()])
     with pytest.raises(ValueError, match="thread"):
-        conduct_review(
-            dirty_repo, fake, "wip: confused", mode="new", thread_id="thread-prior"
-        )
+        conduct_review(dirty_repo, fake, "wip: confused", mode="new", thread_id="thread-prior")
     assert fake.sent == []
 
 

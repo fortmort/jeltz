@@ -103,9 +103,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--response-file",
         help="reviewer-response output answering the round being resumed",
     )
-    parser.add_argument(
-        "--verify-output", help="file holding the full `make verify` output"
-    )
+    parser.add_argument("--verify-output", help="file holding the full `make verify` output")
     parser.add_argument(
         "--size-ceiling",
         type=int,
@@ -120,8 +118,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.resume and args.backend:
         parser.error(
-            "--backend applies to --new only; "
-            "a resumed review stays on its recorded backend"
+            "--backend applies to --new only; a resumed review stays on its recorded backend"
         )
     if args.response_file and not args.resume:
         parser.error(
@@ -253,8 +250,7 @@ def _round_record(round_number: int, result: ReviewResult) -> dict[str, Any]:
         "round": round_number,
         "verdict": result.verdict["verdict"],
         "blockers": [
-            {"id": b["id"], "disposition": b.get("disposition")}
-            for b in result.verdict["blockers"]
+            {"id": b["id"], "disposition": b.get("disposition")} for b in result.verdict["blockers"]
         ],
         "costs": list(result.costs),
     }
@@ -262,9 +258,7 @@ def _round_record(round_number: int, result: ReviewResult) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     """Run one review round; the return value is the process exit code."""
-    logging.basicConfig(
-        stream=sys.stderr, level=logging.INFO, format="%(message)s", force=True
-    )
+    logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(message)s", force=True)
     args = _parse_args(argv)
     repo = Path(args.repo).resolve()
     reap_stale_worktrees(repo)

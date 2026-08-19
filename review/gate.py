@@ -126,16 +126,10 @@ def decide(repo: Path) -> GateDecision:
     if state is None:
         return GateDecision(False, "unreviewed source changes with no review record")
     if state["diff_hash"] != tree_state_hash(repo):
-        return GateDecision(
-            False, "the tree changed after the last review; it is stale"
-        )
+        return GateDecision(False, "the tree changed after the last review; it is stale")
     if state.get("escalated"):
-        return GateDecision(
-            True, "review escalated to a human; automated gating ends here"
-        )
+        return GateDecision(True, "review escalated to a human; automated gating ends here")
     verdict = state["verdict"].get("verdict")
     if verdict in ACCEPTING_VERDICTS:
         return GateDecision(True, "reviewed and accepted for this exact tree")
-    return GateDecision(
-        False, f"the last review ended {verdict}; blockers are still open"
-    )
+    return GateDecision(False, f"the last review ended {verdict}; blockers are still open")

@@ -37,8 +37,8 @@ enforced, not merely documented: `tools/preflight.sh` reads the installed
 version and refuses an older one by name. Older uv releases may well work;
 they are simply untested here.
 
-Everything from the Python ecosystem - pytest, pytest-cov, jsonschema - is
-provisioned by uv from `pyproject.toml` and the committed `uv.lock`, so no
+Everything from the Python ecosystem - pytest, pytest-cov, jsonschema, ruff -
+is provisioned by uv from `pyproject.toml` and the committed `uv.lock`, so no
 Python tool needs installing by hand and every checkout gets the same
 versions. uv supplies the interpreter too if the host has no Python matching
 `requires-python`.
@@ -48,12 +48,20 @@ versions. uv supplies the interpreter too if the host has no Python matching
 ```sh
 make verify   # lint + tests; provisions the environment first
 make venv     # provision .venv from uv.lock, nothing else
-make lint     # shellcheck + shfmt over the shipped shell
+make lint     # shellcheck + shfmt over the shell, ruff over the Python
 make test     # pytest with the 100% coverage gate on review/
 ```
 
 `make test` syncs before running, so tests never execute against an
-environment that predates a dependency change.
+environment that predates a dependency change. `make lint` syncs too, because
+the ruff that judges this tree is the one the lockfile pins - not whichever
+version happens to be on `PATH`.
+
+The Python here is held to the full ruff rule set declared in
+`pyproject.toml`, which is deliberately stricter than the abbreviated set the
+shipped `hooks/ruff.sh` runs in consumer projects: that one tolerates unused
+imports and undefined names because it fires mid-edit, where those are states
+rather than defects.
 
 ### Changing dependencies
 
