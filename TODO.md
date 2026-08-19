@@ -16,7 +16,7 @@ Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer, and all four can enforce the gate
 (the "only three" premise fell during T19 - see 3.5).
 
-Status: T1-T20 and T22-T24 complete; next task is T25. T32-T39 (T32-T37
+Status: T1-T20 and T22-T25 complete; next task is T26. T32-T39 (T32-T37
 added 2026-08-17 after T20's acceptance, T38 during T23, T39 during T24)
 are Phase 5 work and must land before Phase 6. T21 (documentation) was moved out of Phase 4
 to the end of Phase 5 on 2026-08-17: it documents installation, and
@@ -448,7 +448,8 @@ consumer project.
 
 Delivered: root `Makefile` with `lint` (shellcheck `-x -P hooks` + `shfmt -i 4
 -ci -d`, wildcarded over `hooks/*.sh` and `hooks/lib/*.sh` so new scripts are
-covered automatically), `test` (pytest from a self-bootstrapping stdlib
+covered automatically; the two formatting flags moved into `.editorconfig` in
+T25), `test` (pytest from a self-bootstrapping stdlib
 `.venv`), and `verify` (lint + test). Tests in `tests/test_makefile.py`;
 `.gitignore` added for the venv and tool caches.
 
@@ -2052,19 +2053,70 @@ T6) and touching seven unrelated modules to fix scaffolding is exactly the
 scope creep the reviewer-response rules forbid.
 Acceptance: one definition, seven call sites, `make verify` green.
 
-#### T25. shfmt formatting contract via .editorconfig
+#### T25. shfmt formatting contract via .editorconfig - DONE
 Goal: `shfmt -d <sources>` reproduces committed formatting with no
 Makefile-side flags to remember.
-- Add a root .editorconfig: charset utf-8, lf, final newline, trimmed
-  trailing whitespace for all files; for `*.sh`: indent_style space,
-  indent_size 4, switch_case_indent true (shfmt reads these plus its own
-  extension keys).
-- Simplify the Makefile shfmt invocation to rely on .editorconfig
-  instead of inline `-i 4 -ci` flags; reformat any shell source the new
-  contract diffs.
-Acceptance: plain `shfmt -d` over SH_SOURCES is clean; `make lint`
-passes; the .editorconfig and Makefile agree on one formatting source of
-truth.
+
+Delivered: a root `.editorconfig`, a `make lint` whose shfmt invocation is
+`shfmt -d $(SH_SOURCES)` and nothing more, and 8 tests in
+`tests/test_shell_formatting.py`.
+
+Behavior as specified in the original acceptance:
+- **The contract is declared**: `[*]` charset utf-8, end_of_line lf,
+  insert_final_newline, trim_trailing_whitespace; `[*.sh]` indent_style
+  space, indent_size 4, switch_case_indent true.
+- **`root = true` ends the search at the repo boundary**, so how this
+  tree's shell is formatted cannot depend on an .editorconfig above
+  wherever it was cloned.
+- **Plain `shfmt -d` over SH_SOURCES is clean and `make lint` passes.** No
+  shell source needed reformatting: the declared keys reproduce `-i 4 -ci`
+  exactly, so this changed where the contract lives, not what it says -
+  which is the outcome the clean-sources test existed to establish rather
+  than assume.
+- **One source of truth, enforced**: a test asserts the shfmt line make
+  runs carries `-d` and no other flag.
+
+Decisions recorded:
+- **Removing the flags IS the mechanism, not tidiness.** shfmt discards
+  every EditorConfig formatting option the moment it is given any parser or
+  printer flag (shfmt(1)), so leaving `-i 4 -ci` in place would have left
+  the .editorconfig declaring a standard nothing enforced. Made executable
+  rather than asserted in a comment: under the repo's own .editorconfig, a
+  single `-i 0` turns the contract-formatted probe into a diff.
+- **Markdown is exempt from the trim**, deviating from this task's literal
+  "trimmed trailing whitespace for all files". Two trailing spaces are a
+  Markdown hard line break, and the shipped
+  `skills/security-audit/SKILL.md` carries 13 of them - a blanket `[*]`
+  trim would reflow a consumer-facing artifact the first time anyone opened
+  it in an editor. `[*.md] trim_trailing_whitespace = false` is the
+  conventional carve-out, and it is pinned by its own test so the exemption
+  stays a decision rather than an omission.
+- **The source list is derived from make, not restated.** The tests pull
+  the shfmt line out of `make -n lint` and run it verbatim, so a source
+  that lint covers cannot go unchecked here - the T38 defect, avoided in a
+  new place rather than reproduced.
+- **The `[*]` keys are declared, not gated.** Charset, line ending, final
+  newline, and trimming are editor directives; shfmt is the enforcement
+  path this task scoped. The tree already complies (swept 2026-08-19: no
+  CRLF, no file missing a final newline, and exactly one file with trailing
+  whitespace - the exempt Markdown one above).
+
+Teeth confirmed by mutation, not assumed:
+- Re-indenting a block of `tools/preflight.sh` to two spaces fails the
+  clean-sources test. That was the one test that passed in RED, because it
+  runs whatever shfmt line make declares and the flags were still there.
+- Deleting `switch_case_indent` from the .editorconfig makes the real tree
+  diff (`install.sh`'s argument-parsing `case`), so the key is
+  behaviorally load-bearing and not merely asserted by the config test.
+- Both files restored and verified byte-identical afterwards.
+
+Collateral, declared:
+- The Makefile header said "shellcheck + shfmt clean shell" and the T1
+  entry recorded `shfmt -i 4 -ci -d`; both described the retired invocation
+  and now point at the .editorconfig contract. The lint comment block says
+  why no formatting flag may come back. README gained a paragraph naming
+  where the shell contract lives and why lint passes shfmt nothing but
+  `-d`.
 
 #### T26. pytest and coverage gates move into pyproject.toml
 Goal: the 100% bar is declared configuration, not a Makefile incantation.

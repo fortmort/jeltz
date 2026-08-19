@@ -1,7 +1,8 @@
 # Tooling for the jeltz distribution repo itself, not for consumer projects.
 # CLAUDE.md in this tree is a reference copy shipped to consumers; the
-# standard jeltz holds itself to is: shellcheck + shfmt clean shell, the full
-# ruff rule set declared in pyproject.toml (T24), and a pytest-driven
+# standard jeltz holds itself to is: shellcheck-clean shell formatted to the
+# .editorconfig contract (T25), the full ruff rule set declared in
+# pyproject.toml (T24), and a pytest-driven
 # subprocess test suite. That tracked [tool.ruff] section also puts this tree
 # on whole-file hook enforcement via hooks/lib/repo-mode.sh -- deliberately,
 # since the tree is clean under those rules (see TODO.md T1, T22, T24).
@@ -56,9 +57,15 @@ preflight-uv:
 # is a wildcard: a new Python file is covered without anyone remembering to
 # add it. Discovery honours .gitignore and ruff's own excludes, so .venv and
 # the caches stay out of it.
+#
+# shfmt gets -d and nothing else, deliberately (T25). The shell formatting
+# contract lives in .editorconfig, where editors read it too, and shfmt
+# discards every EditorConfig formatting option the moment it is handed any
+# parser or printer flag. Restoring the old `-i 4 -ci` here would therefore
+# not reinforce the contract, it would silently replace it.
 lint: preflight-shell venv
 	$(SHELLCHECK) -x -P hooks $(SH_SOURCES)
-	$(SHFMT) -i 4 -ci -d $(SH_SOURCES)
+	$(SHFMT) -d $(SH_SOURCES)
 	$(RUFF) check .
 	$(RUFF) format --check .
 

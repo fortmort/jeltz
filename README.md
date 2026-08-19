@@ -63,6 +63,12 @@ shipped `hooks/ruff.sh` runs in consumer projects: that one tolerates unused
 imports and undefined names because it fires mid-edit, where those are states
 rather than defects.
 
+The shell formatting contract lives in `.editorconfig` - four-space indents
+and indented `case` clauses - so an editor and `make lint` read the same
+rules. That is why the Makefile hands `shfmt` no formatting flags: shfmt
+ignores EditorConfig entirely once it is given any parser or printer flag, so
+a flag there would quietly replace the contract rather than restate it.
+
 ### Changing dependencies
 
 Edit `pyproject.toml`, then refresh the pins:
