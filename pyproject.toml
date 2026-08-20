@@ -49,6 +49,25 @@ dev = [
 [tool.setuptools]
 packages = []
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+# Coverage is on for every run, but what is measured and how much is
+# required are coverage's own settings and are declared in [tool.coverage]
+# below. Naming them again here would not restate them: command-line
+# coverage flags override the config file, so the two could only rank.
+addopts = "--cov --cov-report=term-missing --strict-markers --strict-config"
+
+markers = [
+    "expected_skip: this test is allowed to skip; the reason is in its body",
+]
+
+[tool.coverage.run]
+source = ["review"]
+
+[tool.coverage.report]
+fail_under = 100
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

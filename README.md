@@ -49,7 +49,7 @@ versions. uv supplies the interpreter too if the host has no Python matching
 make verify   # lint + tests; provisions the environment first
 make venv     # provision .venv from uv.lock, nothing else
 make lint     # shellcheck + shfmt over the shell, ruff over the Python
-make test     # pytest with the 100% coverage gate on review/
+make test     # pytest; the 100% coverage gate on review/ is in pyproject.toml
 ```
 
 `make test` syncs before running, so tests never execute against an
@@ -62,6 +62,18 @@ The Python here is held to the full ruff rule set declared in
 shipped `hooks/ruff.sh` runs in consumer projects: that one tolerates unused
 imports and undefined names because it fires mid-edit, where those are states
 rather than defects.
+
+Which tests run, what is measured, and the 100% bar on `review/` are
+declared in `pyproject.toml`, so a bare `pytest` enforces exactly what
+`make test` does - the recipe passes no arguments of its own. Two
+consequences worth knowing: a subset run (`pytest tests/test_gate.py`) fails
+on coverage, because a subset cannot cover the whole package, so pass
+`--no-cov` when running one file; and a skipped test counts as a failure
+unless it is marked `@pytest.mark.expected_skip`, so a test that quietly
+stops running cannot leave a green build behind it. A module that skips
+itself while being imported - `importorskip` on a tool that is missing -
+fails unconditionally, because it never finished importing and so has no
+marker to declare itself with.
 
 The shell formatting contract lives in `.editorconfig` - four-space indents
 and indented `case` clauses - so an editor and `make lint` read the same

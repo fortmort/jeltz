@@ -63,7 +63,11 @@ def test_make_lint_fails_on_formatting_violation(lint_tree: Path) -> None:
 
 
 def test_make_test_invokes_pytest() -> None:
-    """The ``test`` target delegates to pytest over the tests directory."""
+    """The ``test`` target delegates to pytest.
+
+    What pytest then runs, and under what gates, is pyproject's to say
+    (T26); this pins only that the target still goes through pytest.
+    """
     result = run_make("test", REPO_ROOT, dry_run=True)
     assert result.returncode == 0, f"make -n test failed:\n{result.stdout}\n{result.stderr}"
     assert "pytest" in result.stdout, f"make test does not invoke pytest:\n{result.stdout}"
@@ -99,6 +103,7 @@ def test_tests_never_run_against_a_stale_environment() -> None:
     )
 
 
+@pytest.mark.expected_skip
 def test_make_test_passes_on_clean_checkout() -> None:
     """``make test`` exits 0 on a clean checkout.
 

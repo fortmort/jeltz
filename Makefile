@@ -2,8 +2,9 @@
 # CLAUDE.md in this tree is a reference copy shipped to consumers; the
 # standard jeltz holds itself to is: shellcheck-clean shell formatted to the
 # .editorconfig contract (T25), the full ruff rule set declared in
-# pyproject.toml (T24), and a pytest-driven
-# subprocess test suite. That tracked [tool.ruff] section also puts this tree
+# pyproject.toml (T24), and a pytest-driven subprocess test suite whose pass
+# and coverage gates are declared in pyproject.toml too (T26). That tracked
+# [tool.ruff] section also puts this tree
 # on whole-file hook enforcement via hooks/lib/repo-mode.sh -- deliberately,
 # since the tree is clean under those rules (see TODO.md T1, T22, T24).
 #
@@ -72,11 +73,19 @@ lint: preflight-shell venv
 # Python under review/ carries a 100% coverage gate (the T1 decision,
 # revisited now that T4 landed Python modules). Shell keeps the behavioral
 # pytest standard instead.
+#
+# The recipe is bare pytest, deliberately (T26). Which tests run, what is
+# measured, and how much of it must be covered are declared in pyproject.toml,
+# which pytest reads on every run -- so an editor's runner, a bisect script,
+# or a hand-typed pytest enforces exactly what this target does. An argument
+# here would be a second statement of the same thing, and a coverage flag on
+# the command line overrides the config file rather than agreeing with it.
+#
 # Provisioning first, unconditionally: an up-to-date sync costs milliseconds,
 # which is cheaper than the class of bug where tests run against a venv that
 # predates a dependency change.
 test: venv
-	$(PYTEST) tests --cov=review --cov-report=term-missing --cov-fail-under=100
+	$(PYTEST)
 
 # Install the dev environment from the lockfile. --locked refuses a lock that
 # trails pyproject.toml rather than re-resolving: the pins are the point, and

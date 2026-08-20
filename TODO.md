@@ -16,7 +16,7 @@ Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer, and all four can enforce the gate
 (the "only three" premise fell during T19 - see 3.5).
 
-Status: T1-T20 and T22-T25 complete; next task is T26. T32-T39 (T32-T37
+Status: T1-T20 and T22-T26 complete; next task is T27. T32-T39 (T32-T37
 added 2026-08-17 after T20's acceptance, T38 during T23, T39 during T24)
 are Phase 5 work and must land before Phase 6. T21 (documentation) was moved out of Phase 4
 to the end of Phase 5 on 2026-08-17: it documents installation, and
@@ -654,8 +654,10 @@ Native-host schema evidence (live probes, 2026-08-15):
 
 Repo decisions recorded:
 - **The T1 coverage revisit is settled:** Python under `review/` carries a
-  100% line-coverage gate (`pytest-cov`, `--cov-fail-under=100` in
-  `make test`); shell keeps the behavioral-pytest standard.
+  100% line-coverage gate (`pytest-cov`; the bar moved out of the `make
+  test` recipe and into `[tool.coverage.report] fail_under` in T26, so a
+  bare `pytest` enforces it too); shell keeps the behavioral-pytest
+  standard.
 - New venv deps: `jsonschema` and `pytest-cov` plus transitives, all
   MIT/permissive. Dependencies live in a tracked list and `make test`
   depends on it through a venv stamp (added after review), so editing the
@@ -2118,18 +2120,94 @@ Collateral, declared:
   where the shell contract lives and why lint passes shfmt nothing but
   `-d`.
 
-#### T26. pytest and coverage gates move into pyproject.toml
+#### T26. pytest and coverage gates move into pyproject.toml - DONE
 Goal: the 100% bar is declared configuration, not a Makefile incantation.
-- `[tool.pytest.ini_options]`: testpaths, addopts carrying the coverage
-  flags (`--cov=review --cov-report=term-missing --cov-fail-under=100`),
-  so any bare `pytest` run enforces the same gate `make test` does.
-- `[tool.coverage]` sections as needed (source, fail_under 100).
-- 100% passing is pytest's exit code; the gate must fail the run on any
-  failed, errored, or unexpectedly-skipped test.
-- Slim the Makefile test target to invoking pytest; behavior identical.
-Acceptance: `pytest` with no arguments and `make test` enforce the same
-100% coverage and 100% pass bar; a deliberately missed line, a failing
-test, and an unexpectedly-skipped test each fail both the same way.
+
+Delivered: `[tool.pytest.ini_options]` and `[tool.coverage]` sections in
+`pyproject.toml`, a `test` recipe reduced to `$(PYTEST)`, a skip gate in the
+root `conftest.py`, and 11 tests in `tests/test_coverage_gate.py`.
+
+Behavior as specified in the original acceptance:
+- **`pytest` with no arguments and `make test` enforce the same bars** -
+  not by agreeing, but by being the same command. The recipe passes no
+  arguments at all, so there is nothing left for the two to disagree about,
+  and a test asserts that (`make -n test`'s pytest line must be bare).
+- **A deliberately missed line fails the run**, even with every test
+  passing.
+- **A failing test and an errored test each fail the run**, and the output
+  names which one.
+- **An unexpectedly-skipped test fails the run**, wherever the skip
+  happens. pytest reports a skip as neither pass nor failure, so a stale
+  `skipif` or a broken environment probe would otherwise leave a green
+  build with a hole in it. Two wrappers in the root `conftest.py` close
+  both paths: `pytest_runtest_makereport` re-casts a skip inside a test
+  body, and `pytest_make_collect_report` re-casts a module that skips
+  itself while being imported. Both name what was skipped and why.
+- **A skip can still be declared.** `@pytest.mark.expected_skip` (a
+  registered marker, so `--strict-markers` catches a typo) marks the
+  exceptions. The suite has exactly one: the recursion guard that stops the
+  nested `make test` check from spawning a third pytest. Collection-time
+  skips have no such escape and are failures unconditionally - a module
+  that aborted its own import has no markers to read.
+
+Decisions recorded:
+- **The bar is spelled once, in `[tool.coverage]`**, deviating from this
+  task's literal `addopts = "--cov=review --cov-report=term-missing
+  --cov-fail-under=100"`. Command-line coverage flags *override* the
+  configuration file rather than merging with it, so the two spellings
+  could only ever rank - the T25 shfmt failure mode in a new place. `addopts`
+  therefore carries bare `--cov`, which switches coverage on and lets
+  pytest-cov read `source` and `fail_under` from `[tool.coverage]`; verified
+  empirically before it was relied on, and pinned by a test asserting
+  `addopts` restates neither. The gain is that `coverage report` and any
+  other front-end now enforce the same 100 as pytest does.
+- **`--strict-markers` and `--strict-config` ride along.** The first is what
+  makes the `expected_skip` marker a declaration instead of a typo-tolerant
+  string; the second turns a misspelled ini key into an error rather than a
+  silently ignored gate.
+- **Coverage now applies to subset runs too**, which is the point (any bare
+  pytest run is gated) but does mean `pytest tests/test_one.py` fails on
+  coverage. `--no-cov` is the escape hatch, documented in README.
+- **The probes run the real declaration.** Each behavioral test builds a
+  disposable project by copying this repo's own `pyproject.toml` and root
+  `conftest.py` beside a two-function package, then runs the argv taken from
+  `make -n test` - so what is exercised is the shipped configuration, not a
+  restatement of it, and the T38 defect is avoided rather than reproduced.
+
+Teeth confirmed by mutation, not assumed:
+- Lowering `fail_under` to 0 makes the missed-line probe pass, so the probe
+  is reading the shipped declaration and not something incidental.
+- Removing `@pytest.mark.expected_skip` from the recursion guard fails that
+  test with `unexpected skip: ... recursion bounded to one level`, so the
+  gate has teeth over the real suite and not only over probes.
+- A subset run of the real suite (`pytest tests/test_verdict.py`) now exits
+  non-zero on coverage at 10%, so the declaration governs bare pytest here
+  and not just in a temp directory.
+- `pyproject.toml` and `tests/test_makefile.py` restored and verified
+  byte-identical afterwards.
+
+Found in review, fixed:
+- **The first skip gate only covered skips raised from a test body.**
+  `pytest.importorskip` at module scope and
+  `pytest.skip(allow_module_level=True)` raise during collection, produce a
+  `CollectReport` rather than a `TestReport`, and so walked past
+  `pytest_runtest_makereport` - a module could skip every test it contained
+  and the run still exited 0 at 100% coverage. Reproduced against the
+  committed configuration before the fix, closed with a
+  `pytest_make_collect_report` wrapper, and pinned by a parametrized probe
+  covering both spellings. The probe keeps its covering tests in a second
+  module so coverage stays at 100% and the skip is the only thing left to
+  fail on.
+
+Collateral, declared:
+- The Makefile header and the `test` recipe comment said the coverage gate
+  lived in the recipe; both now point at pyproject and say why no argument
+  may come back. `test_make_test_invokes_pytest`'s docstring claimed the
+  target names the tests directory, which pyproject now does.
+- README's target list and a new paragraph record where the gates live, the
+  `--no-cov` escape hatch for subset runs, and the skip rule.
+- The T1 coverage decision recorded in section 3 pointed at
+  `--cov-fail-under=100` in `make test`; it now points at where the bar went.
 
 #### T27. install.sh security hardening: no recursive force-delete
 Goal: install.sh either acts safely or errors with a reason - it must
