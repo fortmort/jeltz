@@ -18,7 +18,9 @@ grok. All four can act as the reviewer, and all four can enforce the gate
 
 Status: T1-T20 and T22-T27 complete; next task is T32. T32-T39 (T32-T37
 added 2026-08-17 after T20's acceptance, T38 during T23, T39 during T24)
-are Phase 5 work and must land before Phase 6. T21 (documentation) was moved out of Phase 4
+are Phase 5 work and must land before Phase 6. T40-T41 (added 2026-08-22
+after T27's fifth review) decide whether the installer keeps its current
+model at all, and T40 must be settled before T33 and T34 are started. T21 (documentation) was moved out of Phase 4
 to the end of Phase 5 on 2026-08-17: it documents installation, and
 installation is rewritten by T23 (uv, now landed), T27 (install.sh
 hardening, now landed), T33 (installer ships the engine), and T34 (installer
@@ -2522,6 +2524,12 @@ surviving file is always one writer's complete, well-formed output
 (never torn); the audit's findings are recorded in this entry.
 
 #### T33. Installer ships the review engine (depends on T22)
+NOTE (2026-08-22): T40 proposes replacing the copy-and-own installer with
+a create-only one whose cleanup is the user's. If T40 is taken, this task
+keeps its subject - the consumer gets the engine - but loses the
+manifest-stamped repair behaviour below, and its dependency-provisioning
+requirement is answered by T41 rather than by install.sh. Read T40 first.
+
 Goal: a consumer repo gets a working `review/run.sh` from install.sh
 alone - consumers do not operate out of the jeltz checkout, and today
 install.sh ships skills only (verified 2026-08-17: no review/ or hooks/
@@ -2554,6 +2562,12 @@ provisioned; tampering with an engine file trips `--check`; breaking the
 environment afterward produces the preflight's named, actionable error.
 
 #### T34. Installer wires the stop gate per host (depends on T33)
+NOTE (2026-08-22): "merge, never clobber" is unchanged by T40, but under
+a create-only installer the merge into an existing consumer settings file
+is the one place jeltz still writes to a file it did not create. Decide
+there whether the gate wiring is written or merely printed for the user
+to paste. Read T40 first.
+
 Goal: the Problem B gate is actually installed, not just documented -
 nothing installs the T16-T19 shims' hook configs today (T19 recorded
 "wiring is T21", but T21 is documentation only).
@@ -2584,6 +2598,120 @@ codex's does (all pinned by tests over the written files); pre-existing
 consumer settings survive byte-for-byte outside the added entry; the
 grok and codex trust steps appear in the respective install output;
 `--check` covers the wiring files.
+
+#### T40. Simplified install: copy into a directory the user names, never delete
+Goal: end the class of problem T27 spent five review rounds on, by giving
+up the thing that generates it - jeltz owning paths in someone else's
+tree. The installer copies files into a directory the user provides and
+never removes anything; cleanup, upgrades, and conflicts are the user's,
+and the installer's job is to say exactly what it would touch.
+
+Why now (2026-08-22 direction): T27 delivered a correct installer at
+247 lines of code across sixteen functions, up from 109, to copy five
+Markdown files. Five successive reviews each found a real defect in the
+same write-side design, each fix was sound, and each revealed the next
+one. The defects were not carelessness - they follow from a shell script
+trying to own a path it can only inspect and then act on. Removing the
+ownership removes them all at once.
+
+The model:
+- **Create-only.** Every destination is created or the run refuses.
+  Nothing is deleted, nothing is overwritten, no manifest licenses a
+  removal. If a destination exists, the refusal names it and says to
+  remove it - that IS the user-managed cleanup.
+- **Upgrade = remove, then install.** The installer prints (and `--check`
+  or a `--list` flag reports) exactly which paths it owns, so removing
+  them is one copy-pasteable command the user runs themselves.
+- **The manifest survives as EVIDENCE, never as authority.** `--check`
+  keeps reporting drift on installed files, which is what T2 built it
+  for; what goes is the manifest's second job of licensing deletion,
+  which is where every T27 refusal path came from.
+- Whether staging + `mv -h` is still worth keeping is a decision for the
+  task. With nothing ever deleted the threat shrinks to writing through a
+  raced symlink into a directory the user named; `mkdir` (create-or-fail)
+  plus the T27 exactness check may be enough on its own. Prefer the
+  smaller script and say which risk was accepted.
+- Delete what the model makes dead: `assert_removable`,
+  `remove_installed`, `manifest_lists`, and the refusals that exist only
+  to guard removal. The T27 tests for those go with them - explicitly, in
+  the entry, not silently.
+
+How the Python engine gets installed (2026-08-22 question, worked
+through). The engine is `review/run.sh` execing
+`python3 -c 'from review.run import main'` with PYTHONPATH set to its own
+parent, so a consumer needs a `python3` >= 3.11 with `jsonschema`
+importable. Four ways to get there:
+- **Installer builds a venv in the consumer repo.** Rejected: it puts
+  thousands of files jeltz owns into someone else's tree, which is
+  exactly what this task exists to stop, and makes `--check` meaningless
+  over them. It also puts a network fetch in the install path.
+- **Vendor the dependency.** Rejected on inspection: `jsonschema` pulls
+  `attrs`, `jsonschema-specifications`, `referencing`, and `rpds-py`,
+  which is a compiled Rust extension - platform-specific wheels cannot be
+  copied into a repo.
+- **The user provides the environment; the installer verifies it and says
+  what to run.** RECOMMENDED. A preflight checks `python3` >= 3.11 and
+  `import jsonschema`, and on failure prints the exact remedy for both
+  common cases (`uv pip install jsonschema`, `pip install jsonschema`)
+  and exits non-zero without touching anything. `run.sh` keeps the same
+  check so later breakage is named rather than a traceback. The consumer
+  already needs a Python to run the engine at all; this asks them to own
+  it, consistent with owning cleanup.
+- **Remove the dependency (T41) so the question disappears.** Then the
+  requirement is `python3` >= 3.11 and nothing else, and the install is a
+  pure file copy. This is the recommended pairing - see T41.
+
+Open decision for the user: T33 records a 2026-08-17 direction that "the
+install must install the review scripts and dependencies". The
+recommendation above reverses the dependency half of it, and that is
+flagged rather than assumed. T41 reconciles the two: with no production
+dependency, an install that copies files does install everything needed.
+
+Documentation is part of this task, not a follow-up: a model where the
+user owns cleanup is unusable undocumented. README gains a section
+covering what the installer copies and where, what it refuses and why,
+the exact upgrade and uninstall procedure, and the Python prerequisite
+with both remedies. T21 keeps the configuration reference and the
+per-host gate wiring; this covers installing the files.
+
+Acceptance: install.sh contains no deletion of any kind (asserted by a
+source scan, like T27's `rm -r` scan); installing into a directory that
+already holds any destination path refuses, names it, and changes
+nothing; a fresh install into a user-named directory produces skills,
+the engine, and hooks byte-identical to the shipped tree, with `--check`
+clean; `--check` still reports drift on an edited installed file; the
+Python preflight refuses with a named remedy when `jsonschema` is not
+importable (or is deleted by T41); README documents install, upgrade,
+and uninstall, and a test pins that the documented uninstall command
+removes exactly the paths the installer reports owning.
+
+#### T41. Remove the last production dependency (recommended with T40)
+Goal: jeltz's shipped engine depends on nothing outside the standard
+library, so installing it is copying files.
+
+`jsonschema` is the only entry in `[project].dependencies`, and it has
+exactly one use: `jsonschema.validate(data, load_schema())` in
+`review/verdict.py:106`, validating a verdict against
+`review/verdict.schema.json`. That schema is 41 lines and closed - it
+uses `type`, `required`, `properties`, `enum`, `const`, `minimum`,
+`minLength`, `items`, and one `$ref` into `$defs`. A validator for that
+subset is small, and every failure mode already has a test, since the
+schema violations are pinned by `tests/test_verdict.py`.
+- The schema FILE stays exactly as it is. It is also shipped verbatim to
+  agy and grok as `--json-schema`, and via `strict_schema()` to codex as
+  `--output-schema`, so it remains a real JSON Schema document. Only
+  jeltz's own validation of the returned verdict stops using the library.
+- Keep `SchemaViolationError`'s message quality: the existing tests
+  assert on what the message names, and a hand-written validator must
+  say which field failed and how, not "invalid".
+- Removing the dependency also removes `jsonschema` from the dev group's
+  transitive set, shrinks `uv.lock`, and makes T40's preflight a Python
+  version check alone.
+Acceptance: `[project].dependencies` is empty; the full suite passes
+unchanged, including every `tests/test_verdict.py` case that asserts on
+schema-violation messages; a verdict violating each keyword the schema
+uses is rejected with a message naming the offending field; the engine
+runs on a Python with no third-party packages installed at all.
 
 #### T35. Fix the recursive `make test` re-execution; profile the rest
 Goal: suite wall time proportionate to its size; today ~220s for ~395
@@ -2698,7 +2826,8 @@ installation. It documents how to install and configure the system, and
 that procedure does not exist yet in its final form: T33 is what makes the
 engine installable at all, T34 is what installs the per-host gate wiring
 (the second bullet's subject), T23 changes how dependencies are
-provisioned, and T27 rewrites install.sh's copy/refusal behavior. Written
+provisioned, T27 rewrites install.sh's copy/refusal behavior, and T40 may
+replace the installation model altogether. Written
 in Phase 4 it would have documented a procedure no code performs, then been
 rewritten four times. It stays a Phase 5 task rather than folding into
 T28-T30 because it is user-facing README/config documentation, not the
