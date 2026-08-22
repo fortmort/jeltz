@@ -16,13 +16,13 @@ Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer, and all four can enforce the gate
 (the "only three" premise fell during T19 - see 3.5).
 
-Status: T1-T20 and T22-T26 complete; next task is T27. T32-T39 (T32-T37
+Status: T1-T20 and T22-T27 complete; next task is T32. T32-T39 (T32-T37
 added 2026-08-17 after T20's acceptance, T38 during T23, T39 during T24)
 are Phase 5 work and must land before Phase 6. T21 (documentation) was moved out of Phase 4
 to the end of Phase 5 on 2026-08-17: it documents installation, and
 installation is rewritten by T23 (uv, now landed), T27 (install.sh
-hardening), T33 (installer ships the engine), and T34 (installer wires the
-gate) - three of which do not exist yet at all.
+hardening, now landed), T33 (installer ships the engine), and T34 (installer
+wires the gate) - two of which do not exist yet at all.
 
 ---
 
@@ -499,7 +499,10 @@ Decisions recorded:
   symlink resolving to `.claude/skills` (added after review: a missing or
   retargeted link is drift for codex/antigravity even when every file
   hashes clean). Exit 1 on any drift. Reinstall repairs all of it,
-  including the link having been replaced by a real directory.
+  including the link having been replaced by a real directory - narrowed by
+  T27 to an EMPTY one, since removing a populated directory is not a repair,
+  and further narrowed to exclude a RETARGETED link, which T27 reports rather
+  than overwrites (a path jeltz cannot prove it made).
 - **User scope** installs real copies into `$HOME/.claude/skills` and
   `$CODEX_HOME/skills` (default `~/.codex`). Antigravity user scope is
   explicitly out of T2's scope - see the Deferred section for why and for
@@ -2209,32 +2212,282 @@ Collateral, declared:
 - The T1 coverage decision recorded in section 3 pointed at
   `--cov-fail-under=100` in `make test`; it now points at where the bar went.
 
-#### T27. install.sh security hardening: no recursive force-delete
+#### T27. install.sh security hardening: no recursive force-delete - DONE
 Goal: install.sh either acts safely or errors with a reason - it must
 never `rm -rf`.
-- Known dangers to remove (reviewed 2026-08-16): the
-  `rm -rf "${root:?}/$name"` in install_skills_into (line 52), the
-  `rm -rf "$repo/.agents/skills"` in project_install (line 124), and the
-  check-then-act race between the `[ -e ] && [ ! -L ]` test (line 123)
-  and that delete - the path can change between test and removal even in
-  a user-controlled directory.
-- Replace delete-then-copy with a safe strategy: only remove what jeltz
-  provably installed (e.g. validate against the manifest before touching
-  anything, remove files individually and directories with non-forced
-  rmdir), and on anything unexpected - unmanifested files, a directory
-  where a symlink should be, content that changed between inspection and
-  action - stop and tell the user exactly what was found and how to
-  resolve it manually.
-- Do a full defensive pass over the script while there: quoting, set -e
-  interactions, TOCTOU on every test-then-act pair, behavior on
-  hostile/degenerate paths.
-- Extend the pytest subprocess suite with the refusal cases (unexpected
-  file in a skill dir, real directory at the symlink location, manifest
-  mismatch) before rewriting - red first, per the loop.
-Acceptance: no `rm -rf` (or equivalent forced recursive delete) remains
-in install.sh; every refusal path is exercised by a test and produces an
-actionable error message; install/reinstall/check flows still pass the
-existing suite.
+
+Delivered: `install.sh` rewritten around one rule - it removes only what its
+own manifest records installing, and never builds anything at the path it
+will occupy, and installs exactly the tree it ships - and 23 tests in
+`tests/test_installer.py` (8 written red for the removal rule, 2 invariant
+guards added in refactor, 13 added across five reviews for the write side).
+
+Behavior as specified in the original acceptance:
+- **No forced recursive delete remains.** Both known dangers are gone: the
+  `rm -rf "${root:?}/$name"` before each skill copy, and the
+  `rm -rf "$repo/.agents/skills"` behind the `[ -e ] && [ ! -L ]` test. In
+  their place, `rm` with no `-r` on one recorded file at a time, `rmdir`
+  (never forced) on directories just emptied, and `ln -s` with no `-f` so a
+  link is never created over anything. A source scan asserts none of it comes
+  back: it fails on `rm -rf`, `rm -fr`, `rm -r`, and `rm --recursive` alike,
+  and skips comments so the rule can still be written down in the file.
+- **Every refusal path is exercised, and names the path.** Six situations,
+  one test each: an unmanifested file in a skill directory, a skills root
+  whose manifest is gone, a symlink standing in for a skill directory, a
+  populated directory where the `.agents/skills` symlink belongs, and a
+  manifest entry pointing outside the install root (install and `--check`
+  separately). Each asserts the same four things - non-zero exit, the message
+  names the offending path, the message says to remove or move it by hand,
+  and the thing is still on disk afterwards.
+- **Install, reinstall, and check flows still pass**, including the two that
+  pin repair: a drifted skill file is restored to shipped content, and an
+  empty directory where the symlink belongs is still replaced, because
+  `rmdir` takes it and that destroys nothing.
+
+Decisions recorded:
+- **The manifest licenses each removal; the filesystem does not.** A path is
+  deleted because jeltz's own manifest records installing it, which is what
+  makes the script safe in a directory it does not own. That is also why a
+  missing manifest is fatal rather than ignorable: without the record, every
+  directory in the install root might be someone's hand-written skill. One
+  deliberate consequence is new behavior - a first install over pre-existing
+  skills of the same name now refuses instead of overwriting them.
+- **Empty directories are the one exception**, removed rather than refused
+  even when unrecorded, because emptiness means there is nothing to destroy.
+  That is what keeps the `.agents/skills` repair T2 pinned working when
+  something replaced the symlink with a bare directory.
+- **Where it matters, the check and the action are one step.** A test and the
+  act it guards are two moments and a path can change in between; the fix is
+  not a tighter test but a narrower action. `rmdir` refuses a symlink, a
+  file, and a non-empty directory; `rm` without `-r` refuses a directory;
+  and on the write side a create either fails when something is already
+  there or happens somewhere else first. A skill copy is assembled in a
+  `mktemp -d` directory inside the install root - unpredictable, so nobody
+  can be waiting at it - and placed with `mv -h`, which fails rather than
+  follow a symlink standing at the destination. The `.agents/skills` link is
+  only ever created, never written over. Two consequences are stated in the
+  script's header rather than papered over: a recorded file whose content was
+  swapped after inspection is still removed (recorded paths are precisely the
+  licence), and a real directory appearing at a destination swallows what was
+  going there - `mv` puts the copy inside it, `ln` puts the link inside it -
+  which is the one case a create cannot report by failing, so it is checked
+  immediately after and refused, with nothing in that directory touched.
+- **Everything is inspected before anything is written.** `assert_removable`
+  runs over every target, and the `.agents/skills` location is checked,
+  before the first copy. A refusal leaves the previous install exactly as it
+  was rather than half-replaced - and the manifest, now written last instead
+  of truncated first, still describes what is actually on disk.
+- **A manifest entry outside the install root stops the run**, on install and
+  on `--check` alike. The manifest is a text file in a directory anyone can
+  edit; an absolute path, or one containing `..`, is not ours to delete and
+  not ours to certify either. `--check` had to be included because a clean
+  report is what licenses the next reinstall to act on the entry: given a
+  correct hash for a file outside the root, the old `--check` called the
+  install healthy.
+- **Drift is still repairable.** A recorded file whose content changed is
+  removed and re-copied, which is what a repair install is for. Only files
+  the manifest never recorded stop the run.
+- **bash 3.2 is the floor.** `/bin/bash` on macOS has no associative arrays,
+  so manifest membership is a newline-delimited `case` match rather than a
+  lookup. Every refusal runs in the main shell (process substitution, never a
+  pipeline into `while`), because an `exit` inside a subshell would end the
+  fork and let the install carry on.
+
+Teeth confirmed by mutation, not assumed:
+- Reinstating a recursive delete fails the source scan in all four spellings.
+- Dropping the manifest-membership check fails three tests, including the one
+  asserting a refusal leaves earlier skills untouched.
+- Deleting the escaping-path `case` fails both out-of-root tests.
+- Moving validation out of the up-front pass and into the write loop fails
+  the "a refusal changes nothing" test.
+- Removing the up-front `.agents/skills` inspection fails the populated-
+  directory test, because the skills are rewritten before the refusal lands.
+- Dropping the symlink half of the plain-directory guard **passed at first**.
+  The test had put the symlink at the FIRST shipped skill, so there was no
+  earlier skill to leave untouched, and the run still refused later when
+  `rmdir` met the symlink. It now stands in for the LAST skill with an
+  earlier one left drifted, and the mutation fails as it should: the
+  assertion, not the code, was what needed fixing.
+- `install.sh` restored and verified byte-identical after every mutation.
+
+Audited in the defensive pass, deliberately unchanged:
+- **A second positional argument silently wins** (`install.sh a b` installs
+  into `b`). That is the caller's own command line, not a path someone else
+  supplies; tightening it is not a safety fix, and it is not being changed
+  without a test.
+- **`[ -d "$repo" ] || usage` prints usage rather than "no such directory".**
+  Unhelpful, not unsafe, unchanged for the same reason.
+- **`cp -R` reproduces a symlink as a symlink.** Nothing under `skills/` is
+  one today, and a test now asserts it stays that way: a committed symlink
+  would install once and be refused on every reinstall after, since the
+  installer cannot tell a link it placed from a link pointing out of the
+  root.
+- **`ln -s` without `-f` is defense in depth and is not pinned by a test.**
+  It closes a race that takes two processes to demonstrate; the tests cover
+  the states, not the interleaving.
+
+Found in review, fixed:
+- **A symlinked manifest wrote outside the install root.** Validating the
+  paths recorded *in* the manifest was true and beside the point: the manifest
+  is itself written, at the end of every install, and `[ -f ]` accepts a
+  symlink to a regular file. Reproduced as reported - a manifest moved out of
+  the consumer and symlinked back was overwritten, taking a marker line with
+  it, at exit 0. `load_manifest` now refuses a manifest that is not a regular
+  file, on install and `--check` alike, and the stamp itself became unlink +
+  noclobber create, so a link appearing after the check fails the write
+  instead of following it (`O_CREAT|O_EXCL` will not follow a symlink).
+- **`cp -R` followed a destination symlink.** Between `remove_installed`
+  emptying a skill directory and `cp` refilling it, a symlink appearing at
+  that path became the copy's destination - the shipped files landing wherever
+  it pointed, verified directly. The destination is now created by `mkdir`,
+  which is create-or-fail and will not reuse or follow anything already there,
+  and the copy writes into a directory this install made.
+- **`ln -s` handed a directory succeeded by linking inside it.** Verified:
+  with a directory at `.agents/skills`, `ln` creates `.agents/skills/skills`
+  and exits 0, so codex and antigravity lose discovery under an install that
+  reported success. The link is now read back and compared after creation.
+  Reinstalling an already-correct link now does nothing at all, which removes
+  the window entirely for the common case.
+- **The header claimed a guarantee the script did not make.** It said a
+  changed path could only make the run fail loudly. That covered removal, not
+  creation, and it is now stated accurately including the two residual
+  windows.
+- **Races are now tested, not just reasoned about.** Four of the six new tests
+  open the window deliberately: a PATH stub shadows the command that runs
+  immediately before the window (`rmdir`, `rm`, `mkdir`), performs the real
+  operation, then does to that path what a process winning the race would do.
+  Each fails with its guard removed - reverting the copy to `cp -R` alone, the
+  stamp to a plain redirect, the link check to `ln`'s exit status, or dropping
+  the post-copy inspection each fails exactly the test that names it. The one
+  remaining window is honestly scoped by its test: a destination swapped
+  *while* cp is writing cannot be un-written, so that test asserts only that
+  the run fails instead of reporting success.
+
+Found in a second review, fixed:
+- **The copy could still land outside the root.** Creating the destination
+  with `mkdir` closed the remove-to-copy gap but not the one after it: a
+  symlink appearing while `cp` ran was delivered through, and the post-copy
+  check only noticed afterwards - detection after an unsafe write, which is
+  not what the rule promises. Nothing is now built at the destination.
+  `mktemp -d` inside the install root creates the copy under an unpredictable
+  name, so every byte lands inside the root whatever appears at the target,
+  and `mv -h` places it - handed a symlink it fails with ENOTDIR instead of
+  following it. Re-run with the reviewer's own interleaving: exit 1, the
+  victim's file untouched, nothing left behind.
+- **`rm -f` on `.agents/skills` is gone.** Replacing the link was a delete
+  followed by a create, and a regular file swapped into the gap was deleted.
+  The link is now built under an unpredictable name and renamed into place:
+  one atomic step, no delete at all. What remains is stated rather than
+  claimed closed - a regular file appearing there *after* it was inspected as
+  a symlink is replaced by the rename, because no POSIX shell primitive
+  replaces a symlink and refuses a regular file in one operation. The same
+  file present when inspected is refused.
+- **A directory appearing at a destination keeps its contents.** That is the
+  one case a create cannot refuse: `mv` puts the moved thing inside it. The
+  moved name is unpredictable, so it can collide with nothing and nothing
+  there is overwritten; the refusal names where the copy landed. Both race
+  tests now assert the directory's pre-existing file survives, which is what
+  the review asked for and what the earlier tests left unasserted.
+- **Staging needs sweeping up.** An exit trap clears a half-built copy file
+  by file and `rmdir`s it - never recursively, on a path this script created
+  under a name `mktemp` made unpredictable - and a test asserts a refused
+  install leaves no `.jeltz-install.*` behind.
+- **`-h` is load-bearing on the placement rename** and is pinned: dropping it
+  fails the two write-through tests.
+- Six mutations this round, each failing exactly the tests that name it:
+  the rename without `-h`, staging at a predictable name, the swallowed-move
+  check, the link post-check, and the cleanup trap (the last of which the
+  third review then removed entirely - see below).
+
+Found in a third review, fixed:
+- **The staging cleanup was a hand-rolled recursive delete.** The exit trap
+  walked the staging directory and removed whatever it found, trusting that
+  the path still named the directory it had created. An unpredictable name
+  stops anyone getting there first; nothing stops the directory being swapped
+  afterwards, and the reviewer demonstrated exactly that - the trap emptied a
+  replacement directory of someone else's files. Tidying up litter was not
+  worth reintroducing the one thing this task exists to remove, so the trap
+  is gone: a copy that could not be placed is left where it is and named in
+  the refusal, which is what T27 asks for everywhere else ("stop and tell the
+  user exactly what was found and how to resolve it manually").
+- **A regular file arriving at `.agents/skills` was overwritten.** The rename
+  that replaced a retargeted link would just as silently replace a regular
+  file that appeared after the path was inspected - the same file that is
+  correctly refused when it is there a moment earlier. No POSIX shell
+  primitive replaces a symlink and refuses a regular file in one step, so
+  the capability that needed one is gone: **a link pointing anywhere other
+  than `../.claude/skills` is now reported, not repaired.** Every remaining
+  operation on that path is create-only (`ln -s` with no `-f`, `rmdir` for an
+  empty directory), so no interleaving destroys anything there. Verified:
+  the reviewer's shim now yields exit 1 with `ln: File exists` and the file
+  still on disk.
+- **That reverses a behavior added two reviews ago**, where a retargeted link
+  was repaired and a test pinned the repair. The test is inverted, not
+  deleted, and now also asserts the refusal lands before any skill is
+  rewritten. T2's own guarantees are untouched: drift is still repaired, and
+  an empty directory where the link belongs is still replaced, because
+  `rmdir` destroys nothing.
+- Four mutations: dropping the up-front retarget check (the refusal arrives
+  after the skills are rewritten), restoring `ln -sfn`, and re-adding a
+  sweep of the staging directory each fail exactly the tests that name them.
+
+Found in a fourth review, fixed:
+- **The manifest recorded what was on disk, not what jeltz ships.** It was
+  built by enumerating the destination after the copy landed, so a staged
+  copy substituted after it was written - which places cleanly, there being
+  nothing at the destination for the rename to object to - was certified as
+  jeltz's own. Exit 0, `--check` clean, and the next ordinary reinstall would
+  then delete someone else's file on the authority of a manifest entry jeltz
+  had written for it. The laundering closed the ownership rule's loop from
+  the other end: everything upstream of it refused correctly, and the record
+  itself was the leak.
+- **The manifest is now derived from the shipped tree** - the paths jeltz
+  ships, hashed at the source - and every shipped file is checked to have
+  arrived intact before it is recorded. A substitution refuses at install
+  time, is never recorded, and is refused again by the next reinstall as an
+  unmanifested file rather than deleted. Verified end to end with the
+  reviewer's reproduction at both stages.
+- This replaced the destination enumeration rather than adding to it, and
+  made the post-copy `assert_plain_directory` redundant: a copy that landed
+  inside a directory, or through a symlink, fails the arrival check. Two
+  mutations - recording the destination again, or keeping the shipped paths
+  but skipping the arrival check - each fail exactly the test that names it.
+
+Found in a fifth review, fixed:
+- **The arrival check proved inclusion, not equality.** Every shipped file
+  was verified to have arrived intact, but nothing checked that the placed
+  directory held nothing else, so an otherwise-intact copy carrying one extra
+  file installed cleanly and `--check` certified it. The placed directory
+  must BE the shipped tree: one loop over the destination now refuses any
+  entry the source does not have, and the file it refuses over is preserved.
+  Verified end to end; the mutation that removes the loop fails exactly the
+  test that names it.
+- **`--check` still passes an unmanifested file added by hand after an
+  install.** That is T2 behavior, not something T27 introduced, and the next
+  reinstall refuses it - extending the drift check is a scope decision and is
+  deliberately not taken in a fifth round of the same area.
+
+Cost, recorded for whoever picks this up next:
+- install.sh went from 109 lines of code to 248 across sixteen functions.
+  Roughly half of that is the removal rule T27 asked for; the rest is the
+  write side, which four review rounds established cannot be done safely in
+  shell by inspecting a path and then acting on it. If a fifth finding lands
+  in this area, the answer is not more shell: it is to stop installing by
+  copy at all and have the consumer clone or extract the repo where they
+  want it, which makes cleanup theirs and deletes this whole class of
+  problem along with the script. **The fifth finding has now landed** (the
+  inclusion-versus-equality gap above): it was small and is fixed, but the
+  threshold is reached, and whether to keep install-by-copy at all is now an
+  open decision rather than an assumption.
+
+Collateral, declared:
+- T2's entry said reinstall repairs the link "including the link having been
+  replaced by a real directory". That is now true only of an empty one, and
+  is qualified there.
+- Consumer-facing documentation of the refusals is deliberately NOT in
+  README. T21 owns installation docs and was moved to the end of Phase 5
+  precisely because T27, T33, and T34 rewrite what it would say; this entry
+  is what T21 draws from.
 
 (T32-T37 were added 2026-08-17 after T20's acceptance review; they are
 numbered after the Phase 6 tasks but must land before Phase 6 begins.)
