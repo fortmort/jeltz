@@ -16,15 +16,16 @@ Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer, and all four can enforce the gate
 (the "only three" premise fell during T19 - see 3.5).
 
-Status: T1-T20 and T22-T27 complete; next task is T32. T32-T39 (T32-T37
-added 2026-08-17 after T20's acceptance, T38 during T23, T39 during T24)
-are Phase 5 work and must land before Phase 6. T40-T41 (added 2026-08-22
-after T27's fifth review) decide whether the installer keeps its current
-model at all, and T40 must be settled before T33 and T34 are started. T21 (documentation) was moved out of Phase 4
-to the end of Phase 5 on 2026-08-17: it documents installation, and
-installation is rewritten by T23 (uv, now landed), T27 (install.sh
-hardening, now landed), T33 (installer ships the engine), and T34 (installer
-wires the gate) - two of which do not exist yet at all.
+Status: T1-T20, T22-T27 and T32 complete; the next Phase 5 task in file
+order is T33. T32-T39 (T32-T37 added 2026-08-17 after T20's acceptance,
+T38 during T23, T39 during T24) are Phase 5 work and must land before
+Phase 6. T40-T41 (added 2026-08-22 after T27's fifth review) decide
+whether the installer keeps its current model at all, so T40 must be
+settled before T33 or T34 is started. T21 (documentation) was moved out
+of Phase 4 to the end of Phase 5 on 2026-08-17: it documents
+installation, and installation is rewritten by T23 (uv, now landed), T27
+(install.sh hardening, now landed), T33 (installer ships the engine), and
+T34 (installer wires the gate) - two of which do not exist yet at all.
 
 ---
 
@@ -2494,34 +2495,146 @@ Collateral, declared:
 (T32-T37 were added 2026-08-17 after T20's acceptance review; they are
 numbered after the Phase 6 tasks but must land before Phase 6 begins.)
 
-#### T32. Collision-resistant temp and evidence files (multi-agent hygiene)
+#### T32. Collision-resistant temp and evidence files (multi-agent hygiene) - DONE
 Goal: nothing the loop writes can collide when several agents run in the
 same directory (2026-08-17 direction: assume multiple agents per
 directory; unique names via UUID/session id, created atomically).
-- `write_state` (review/run.py) composes its atomic write through a
-  FIXED temp name (`state.json.tmp`): two concurrent writers race on the
-  temp file even though the final `replace` is atomic. Switch to a
-  unique per-writer temp (`tempfile.mkstemp` in the state directory) +
-  `os.replace`, and handle crash leftovers safely (age- or pid-guarded
-  cleanup, never "delete all *.tmp").
-- The T20 skill instructs fixed example evidence names
-  (`.jeltz/review/verify.txt`, `wip-message.txt`, and the response
-  file). Make the instruction collision-resistant: create each file with
-  `mktemp` under `.jeltz/review/` (unique and atomic) and pass the
-  resulting paths to `--verify-output` / `--wip-message-file` /
-  `--response-file`; update the skill text and the tests that pin it.
-- Audit every other write for the same property. Already correct and the
-  model to follow: worktree parents come from `mkdtemp` with a pid file,
-  and `reap_stale_worktrees` reaps only when `_owner_alive` proves the
-  owning process is gone (verified 2026-08-17) - a live concurrent
-  agent's worktree survives.
-- Scope boundary: this task is transient files only. The shared per-tree
-  singletons (`state.json`, `escalation.md`) need a real concurrency
-  protocol, which is T36 - do not half-solve it here.
-Acceptance: no fixed-name temp path remains in shipped code or skill
-text; a test exercises two interleaved `write_state` writers and the
-surviving file is always one writer's complete, well-formed output
-(never torn); the audit's findings are recorded in this entry.
+
+Delivered: `write_state` (review/run.py) now publishes through a temp file
+named for this write and this process and sweeps only what a dead writer
+abandoned; `process_alive` (review/worktree.py) is the one liveness proof
+both reapers use; the T20 skill creates its evidence files with `mktemp`;
+and 8 tests (5 in `tests/test_run.py`, 2 in `tests/test_worktree.py`, 1 in
+`tests/test_phase_loop_skill.py`).
+
+Behavior as specified in the original acceptance:
+- **No fixed-name temp path remains in shipped code or skill text.**
+  `state.json.tmp` became `state.json.<pid>.<uuid>.tmp`, and the skill's
+  `.jeltz/review/verify.txt` / `.jeltz/review/wip-message.txt` examples
+  became `mktemp` commands. All three evidence files - verify, message,
+  and reviewer-response - are reserved that way, and each instructed
+  `review/run.sh` command is passed the very path `mktemp` printed.
+- **Two interleaved writers never leave a torn file.** A test completes a
+  second writer inside the window where the first still holds an
+  unpublished temp, and the file left behind is one writer's whole state.
+  Under the old fixed name that interleaving did not merely tear the
+  file, it destroyed both writes: the second writer truncated the first's
+  buffer and then renamed it away, so the first writer's publish failed
+  with `FileNotFoundError`.
+- **The audit's findings are recorded** - see the two lists below.
+
+Decisions recorded:
+- **`tempfile.mkstemp` was not used**, though this entry originally named
+  it, for two reasons found while writing the cleanup. Its name is random
+  and therefore anonymous, and the same bullet asks for pid-guarded
+  cleanup: a reaper cannot prove a leftover is abandoned unless the file
+  says who owns it. And `mkstemp` creates at 0600, which would silently
+  narrow `state.json` from whatever the writer's umask gives it - a
+  behavior change nobody asked for, in a file another user's agent may be
+  reading. The replacement is `path.<pid>.<uuid4>.tmp` opened with `x`
+  (`O_CREAT|O_EXCL`), which is unique, self-identifying, umask-honoring,
+  and - the T27 rule - refuses the path outright if a file, directory, or
+  symlink already holds it, rather than testing first and writing anyway.
+  A test pins the resulting mode against the mkstemp variant.
+- **Cleanup is pid-guarded, not age-guarded.** Age cannot distinguish a
+  slow writer from a dead one, and guessing wrong deletes a live agent's
+  unpublished work. The sweep reclaims a leftover only when the process
+  named in its filename is provably gone - the same standard
+  `reap_stale_worktrees` already held itself to.
+- **Cleanup only ever touches files jeltz named.** A file must match the
+  full `state.json.<digits>.<32 hex>.tmp` shape to be a candidate; a
+  `notes.tmp` or a `state.json.scratch.tmp` belonging to whoever else is
+  working there is left alone. Tested.
+- **Cleanup is a courtesy and never a failure.** A path that will not
+  unlink (a directory wearing a leftover's name) is logged at debug and
+  left in place; the review round proceeds. Forcing it would be exactly
+  the recursive-delete reflex T27 removed from the installer.
+- **`PermissionError` from `os.kill(pid, 0)` counts as alive.** It is the
+  strongest proof of life there is - the process exists, this user simply
+  may not signal it - and reading it as staleness would delete a running
+  review's files the moment two developers share a directory.
+- **The skill's evidence files are `mktemp`-created and never cleaned
+  up.** A session reuses its own three files across resume rounds, so the
+  litter is per session, not per round. Sweeping other sessions' evidence
+  is precisely what the pid rule above forbids, and jeltz cannot prove
+  which session owns a `verify.XXXXXXXX`; the untidiness is the price of
+  that, and `.jeltz/` is already excluded from the reviewed tree.
+
+Audited, and already correct (no change needed):
+- `review/worktree.py`: the review worktree parent is `mkdtemp` with a pid
+  file beside it, and `reap_stale_worktrees` reclaims only when
+  `_owner_alive` proves the owner gone. This is the model the state-temp
+  sweep was built from. Everything written inside the checkout
+  (`_materialize_wip`) is inside that unique parent.
+- `review/codex.py`: the verdict schema handed to `codex exec` goes
+  through `NamedTemporaryFile`, unique per invocation and removed on
+  close.
+- `hooks/large-edit-guard.sh`: the retry token is written to
+  `mktemp "$CACHE_DIR/.token.tmp.XXXXXX"` and `mv`d onto a final name
+  derived from tool+path. Unique temp, deterministic destination -
+  correct.
+- `hooks/ruff.sh`: the pre-format snapshot is `mktemp` under `TMPDIR`
+  with a trap removing it on every exit path.
+- `install.sh`: the T27 staging directory is `mktemp -d` inside the
+  install root.
+- `review/claude.py` and `review/grok.py`: the `json.dumps(...)` calls
+  near their `--json-schema` flags are command-line arguments, not file
+  writes. No temp file is involved.
+- `review/stop_hook.py`: writes the hook envelope to stdout only.
+
+Audited, deliberately unchanged (this task's scope boundary):
+- `_escalate` in review/run.py writes `.jeltz/review/escalation.md` with a
+  plain non-atomic `write_text` over a fixed final name, so two agents
+  escalating in one directory can interleave into one dossier or lose one
+  entirely. This is a shared per-tree singleton, not a transient file, and
+  making the write atomic without deciding who owns the singleton is the
+  half-solve this entry forbids: a rename settles which dossier survives,
+  it does not stop one tiebreak's evidence replacing another's. T36
+  already carries it by name, with no exemption, alongside `state.json`
+  and the bridge's read-modify-write denial merge.
+
+Found while checking the guards:
+- The temp file's cleanup would have removed a file this write did not
+  create. The exclusive create and the `finally` that unlinks the temp
+  were in the same `try`, so a failed create - the one case where the
+  path belongs to somebody else - fell straight into the cleanup and
+  deleted their file. The open now happens outside the `try`, so the
+  cleanup can only ever reach a file this write made, and a test forces
+  the collision and asserts the occupant is untouched.
+
+Verified by mutation (each guard removed in turn, then restored
+byte-identically; every one is caught, and by a test that names it):
+- pid guard dropped from the sweep -> a live writer's temp is deleted.
+- sweep replaced with `rm *.tmp` -> a stranger's file and a live
+  writer's file both go, and the undeletable path fails the round.
+- unique name reverted to `state.json.tmp` -> interleaved writers tear,
+  crashed writers share one leftover, a directory blocks the write.
+- exclusive create moved back inside the `try`, or weakened to `w` ->
+  the occupied path is overwritten or deleted.
+- `PermissionError` no longer proof of life -> another user's running
+  review is reaped.
+- `OverflowError` guard dropped -> a corrupt pid marker crashes the
+  reaper.
+
+Found in review, fixed:
+- The skill created unique names but the run commands still took
+  placeholders, so nothing tied the two together: a session could
+  reserve `verify.XXXXXXXX` and then pass a fixed path anyway, and the
+  test proved only that some `mktemp` line existed. The commands now
+  take `"$verify_file"`, `"$message_file"`, and `"$response_file"` in
+  the shell that reserved them, the response file gets its own `mktemp`
+  line rather than a mention in prose, and the test requires an `mktemp`
+  template and a matching flag for each of the three - which is what
+  this entry asked for in the first place.
+
+Collateral, declared:
+- `reap_stale_worktrees` was hardened while its liveness check was being
+  factored out. It previously read `PermissionError` as death (it would
+  have deleted another user's running review) and crashed outright on a
+  corrupted pid marker holding a number too large for a C int - in a
+  reaper every review runs at startup, so one bad marker wedged every
+  later review in that repository. Both are tested.
+- `_owner_alive` now delegates to `process_alive`; no caller changed.
 
 #### T33. Installer ships the review engine (depends on T22)
 NOTE (2026-08-22): T40 proposes replacing the copy-and-own installer with
@@ -2740,6 +2853,11 @@ numbers and the durations profile are recorded here; `make verify` still
 green with the same gates.
 
 #### T36. Concurrency-safe review state protocol (depends on T32)
+NOTE (2026-08-23): T32 has landed. What it delivered is exactly the
+premise below - no writer can tear another's file, and no reaper deletes
+a live agent's work - and no more. `state.json`, `escalation.md`, and the
+bridge's read-modify-write denial merge are all still last-writer-wins,
+and T32's entry records the escalation dossier as deliberately left here.
 Goal: two agents in the same directory each complete a full review
 lifecycle without corrupting each other's records. Last-writer-wins is
 NOT acceptable (2026-08-17 review): T32's unique staging files stop torn

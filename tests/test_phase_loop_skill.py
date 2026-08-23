@@ -69,6 +69,14 @@ REVIEW_COMMANDS = (
 
 ESCALATION_DOSSIER = ".jeltz/review/escalation.md"
 
+# Each evidence file the review round consumes, and the flag that must
+# receive the very path `mktemp` reserved for it.
+EVIDENCE_FILES = (
+    ("verify_file", "--verify-output"),
+    ("message_file", "--wip-message-file"),
+    ("response_file", "--response-file"),
+)
+
 
 def _phase4_command(flag: str) -> str:
     """The full backticked review/run.sh command the skill instructs.
@@ -229,8 +237,8 @@ def test_instructed_new_invocation_reaches_reviewer_with_context(
     command = (
         _phase4_command("--new")
         .replace("<todo-ref>", "T42. Wire the frobnicator")
-        .replace("<message-file>", str(message_file))
-        .replace("<verify-file>", str(verify_file))
+        .replace("$message_file", str(message_file))
+        .replace("$verify_file", str(verify_file))
     )
     home = install_fake_codex(tmp_path, [{"stdout": events(verdict_obj())}])
     argv = shlex.split(command)[1:] + ["--repo", str(dirty_repo)]
@@ -353,3 +361,26 @@ def test_commit_discipline_survives() -> None:
     assert re.search(r"(one|single|a)\b[^.\n]*final commit message", SKILL_TEXT, re.IGNORECASE), (
         "the single final commit message is gone"
     )
+
+
+def test_every_evidence_file_is_created_with_mktemp_and_reaches_its_flag() -> None:
+    """Each of the three evidence files is `mktemp`-made and then used.
+
+    T32's premise is several agents working in one directory. Fixed
+    example names (`.jeltz/review/verify.txt`) put two sessions on the
+    same path, so one session's verify output, commit message, or
+    reviewer-response could be handed to the other's reviewer - and the
+    reviewer would have no way to tell. Creating the name is only half
+    the contract: the path `mktemp` printed has to be the path the
+    orchestrator is given, or the session reserves a unique name and
+    then passes a fixed one anyway.
+    """
+    for variable, flag in EVIDENCE_FILES:
+        assert re.search(rf"{variable}=\$\(mktemp \.jeltz/review/\S*X{{6,}}\)", SKILL_TEXT), (
+            f"{variable} is not created with an mktemp template under .jeltz/review/"
+        )
+        assert re.search(rf'{flag} "\${variable}"', SKILL_TEXT), (
+            f"the path reserved as {variable} is never passed to {flag}"
+        )
+    for fixed in ("verify.txt", "wip-message.txt"):
+        assert fixed not in SKILL_TEXT, f"fixed evidence filename still instructed: {fixed}"

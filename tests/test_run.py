@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from review.packet import tree_state_hash
-from review.run import main
+from review.run import main, write_state
 from tests.conftest import git
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -957,3 +957,183 @@ def test_wip_message_flags_are_exclusive(dirty_repo: Path, capsys: pytest.Captur
         )
     assert excinfo.value.code == 2
     assert "not allowed with" in capsys.readouterr().err
+
+
+CRASHED_WRITER = """
+import os
+import pathlib
+import sys
+
+sys.path.insert(0, {root!r})
+
+from review.run import write_state
+
+# Die exactly where a killed writer dies: holding a temp file it has
+# written but has not yet published over the state file.
+os.replace = lambda *args: os._exit(9)
+pathlib.Path.replace = lambda self, target: os._exit(9)
+
+write_state(pathlib.Path({repo!r}), {{"schema_version": 1, "writer": "crashed"}})
+"""
+
+
+def crash_a_writer(repo: Path) -> tuple[Path, int]:
+    """Leave behind exactly what a writer killed mid-write leaves behind.
+
+    Runs a real writer in a real process and kills it in the window
+    between writing its temp file and publishing it, so the leftover
+    carries whatever name the implementation gives it - these tests
+    never have to know that spelling.
+
+    Args:
+        repo: The repository whose review state is being written.
+
+    Returns:
+        The leftover temp file and the pid of the process that left it.
+    """
+    review_dir = state_path(repo).parent
+    before = set(review_dir.iterdir()) if review_dir.exists() else set()
+    script = CRASHED_WRITER.format(root=str(REPO_ROOT), repo=str(repo))
+    process = subprocess.Popen([sys.executable, "-c", script])
+    assert process.wait() == 9, "the writer did not die in the intended window"
+    left = sorted(set(review_dir.iterdir()) - before - {state_path(repo)})
+    assert len(left) == 1, (
+        f"expected the killed writer to leave one temp file of its own, found {left}"
+    )
+    return left[0], process.pid
+
+
+def test_interleaved_writers_never_leave_a_torn_state_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two writers in one directory publish; they never shred each other.
+
+    T32's premise is several agents per directory. Here the second
+    writer completes inside the window where the first still holds an
+    unpublished temp file - the interleaving a fixed temp name cannot
+    survive, because the second writer's publish renames the first
+    writer's temp out from under it. Whichever write lands last, the
+    file left behind must be one writer's complete state, never a
+    blend of the two and never absent.
+    """
+    first = {"schema_version": 1, "writer": "first", "padding": "a" * 4096}
+    second = {"schema_version": 1, "writer": "second"}
+    interleaved: list[bool] = []
+    real_os_replace = os.replace
+    real_path_replace = Path.replace
+
+    def publishing_after_a_second_writer(publish):
+        def wrapper(*args):
+            if not interleaved:
+                interleaved.append(True)
+                write_state(tmp_path, second)
+            return publish(*args)
+
+        return wrapper
+
+    monkeypatch.setattr(os, "replace", publishing_after_a_second_writer(real_os_replace))
+    monkeypatch.setattr(Path, "replace", publishing_after_a_second_writer(real_path_replace))
+    write_state(tmp_path, first)
+    monkeypatch.undo()
+    assert interleaved, "the second writer never ran; the window was not exercised"
+    assert read_state(tmp_path) in (first, second)
+
+
+def test_crashed_writers_leftovers_are_reaped_and_strangers_files_are_not(
+    tmp_path: Path,
+) -> None:
+    """Cleanup reclaims jeltz's own abandoned temps and nothing else.
+
+    Two writers are killed mid-write, so two temp files are abandoned;
+    each has to be its own file, or the second writer overwrote the
+    first one's unpublished work on the way past. A killed writer
+    cannot clean up after itself, so the next writer does it - but only
+    for files it can prove jeltz wrote and abandoned. Deleting every
+    `*.tmp` in the directory would destroy work belonging to whoever
+    else is running there.
+    """
+    first, _ = crash_a_writer(tmp_path)
+    second, _ = crash_a_writer(tmp_path)
+    assert first != second, "two writers shared one temp path"
+    stranger = first.parent / "notes.tmp"
+    stranger.write_text("someone else's scratch\n")
+    lookalike = first.parent / "state.json.scratch.tmp"
+    lookalike.write_text("not jeltz's either\n")
+    write_state(tmp_path, {"schema_version": 1, "writer": "next"})
+    assert not first.exists(), "a crashed writer's temp file was never reclaimed"
+    assert not second.exists(), "a crashed writer's temp file was never reclaimed"
+    assert stranger.read_text() == "someone else's scratch\n"
+    assert lookalike.read_text() == "not jeltz's either\n"
+
+
+def test_a_live_writers_temp_file_is_never_reaped(tmp_path: Path) -> None:
+    """Cleanup spares a temp file whose owner is still running.
+
+    Staleness has to be proved, not assumed: a concurrent agent's
+    unpublished temp file looks identical to an abandoned one, and the
+    only thing separating them is whether the process that created it
+    is alive.
+    """
+    leftover, dead_pid = crash_a_writer(tmp_path)
+    assert f".{dead_pid}." in leftover.name, (
+        "a writer's temp file does not name the process that created it, "
+        "so cleanup cannot tell an abandoned file from a live one"
+    )
+    live = leftover.parent / leftover.name.replace(f".{dead_pid}.", f".{os.getpid()}.", 1)
+    leftover.rename(live)
+    write_state(tmp_path, {"schema_version": 1, "writer": "next"})
+    assert live.exists(), "a running writer's unpublished temp file was deleted"
+
+
+def test_a_directory_wearing_a_leftover_name_cannot_block_a_write(tmp_path: Path) -> None:
+    """An undeletable path in the state directory stops nothing.
+
+    Cleanup is best-effort by design: it must never turn a hostile or
+    merely odd path into a failed review round, and it must never try
+    to force one away.
+    """
+    leftover, _ = crash_a_writer(tmp_path)
+    occupied = leftover.parent / leftover.name
+    leftover.unlink()
+    occupied.mkdir()
+    state = {"schema_version": 1, "writer": "next"}
+    write_state(tmp_path, state)
+    assert read_state(tmp_path) == state
+    assert occupied.is_dir(), "cleanup removed a directory it could not prove was a temp file"
+
+
+def test_the_state_file_keeps_the_permissions_a_plain_write_gives_it(tmp_path: Path) -> None:
+    """Publishing through a temp file does not change who can read state.
+
+    A guard on the implementation rather than a driver of it: the temp
+    file is an internal detail, so the published state file must carry
+    the mode the writing process's umask would have produced anyway.
+    """
+    write_state(tmp_path, {"schema_version": 1})
+    reference = tmp_path / "reference.json"
+    reference.write_text("{}\n")
+    assert state_path(tmp_path).stat().st_mode & 0o777 == reference.stat().st_mode & 0o777
+
+
+def test_a_temp_path_something_already_holds_is_never_written_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An occupied temp path stops the write instead of being overwritten.
+
+    The name carries a uuid, so this cannot realistically happen - but
+    "cannot realistically" is not a guarantee, and what it would hide is
+    jeltz writing over, and then deleting, a file it never created.
+    Forcing the collision proves the write fails closed and leaves the
+    occupant exactly as it was.
+    """
+    state_dir = state_path(tmp_path).parent
+    state_dir.mkdir(parents=True)
+    occupied = state_dir / "state.json.taken.tmp"
+    occupied.write_text("someone else's file\n")
+    monkeypatch.setattr("review.run._state_temp", lambda _: occupied)
+    with pytest.raises(FileExistsError):
+        write_state(tmp_path, {"schema_version": 1})
+    assert occupied.read_text() == "someone else's file\n", (
+        "a file jeltz did not create was overwritten or removed"
+    )
+    assert not state_path(tmp_path).exists()

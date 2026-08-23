@@ -190,17 +190,40 @@ def _discard(repo: Path, worktree: Path, parent: Path) -> None:
     shutil.rmtree(parent, ignore_errors=True)
 
 
+def process_alive(pid: int) -> bool:
+    """Whether a process with this id is running.
+
+    The shared liveness proof behind every crash-leftover reaper here and
+    in the orchestrator (T32): a leftover is reclaimed only once its
+    owner is provably gone, so a concurrent agent's work is never
+    touched. PermissionError is proof of life - the process exists, this
+    user simply may not signal it - while an id no process could carry is
+    proof of nothing and must not crash the reaper every review runs at
+    startup.
+
+    Args:
+        pid: The process id recorded beside the leftover.
+
+    Returns:
+        True if a process with that id is running, including one owned
+        by another user.
+    """
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except (OSError, OverflowError):
+        return False
+    return True
+
+
 def _owner_alive(pid_file: Path) -> bool:
     """Whether the process recorded in the pid marker is still running."""
     try:
         pid = int(pid_file.read_text())
     except (OSError, ValueError):
         return False
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    return True
+    return process_alive(pid)
 
 
 def reap_stale_worktrees(repo: Path) -> list[str]:

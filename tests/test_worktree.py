@@ -278,3 +278,38 @@ def test_reviewer_commit_fails_the_review(dirty_repo: Path) -> None:
         )
         with pytest.raises(IntegrityError, match="HEAD"):
             verify_integrity(worktree, before)
+
+
+def test_reap_spares_a_worktree_whose_owner_cannot_be_signalled(
+    dirty_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A process we may not signal is alive, not absent.
+
+    ``os.kill(pid, 0)`` raises PermissionError when the process exists
+    but belongs to another user - the strongest proof of life there is.
+    Reading that as staleness would delete a running review's checkout
+    the moment two developers share a directory.
+    """
+    with review_worktree(dirty_repo, "wip: another user's review") as worktree:
+
+        def not_permitted(*_: int) -> None:
+            raise PermissionError(1, "Operation not permitted")
+
+        monkeypatch.setattr(os, "kill", not_permitted)
+        reaped = reap_stale_worktrees(dirty_repo)
+        monkeypatch.undo()
+        assert reaped == [], "reaped a worktree whose owner is demonstrably running"
+        assert worktree.exists()
+
+
+def test_reap_treats_an_impossible_pid_marker_as_stale(dirty_repo: Path) -> None:
+    """A pid too large to name a process is no proof of life.
+
+    A corrupted or truncated marker must leave the worktree reclaimable.
+    Every review reaps at startup, so a marker that crashes the reaper
+    would take down every later review in that repository with it.
+    """
+    with review_worktree(dirty_repo, "wip: corrupt marker") as worktree:
+        (worktree.parent / "pid").write_text("99999999999999999999")
+        assert str(worktree) in reap_stale_worktrees(dirty_repo)
+        assert not worktree.exists()

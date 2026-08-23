@@ -11,12 +11,20 @@ exit 20 leaves a dossier at ``.jeltz/review/escalation.md``; the round that
 triggered it is still recorded, because the round did complete. Operational
 failures exit 1 and never write state, so a failed round cannot clobber the
 last valid review record.
+
+Several agents may run in one directory (T32), so every file this module
+writes is either published atomically over its final name or carries a
+name no other writer can hold - and nothing is ever deleted without
+proof that the process which created it has died.
 """
 
 import argparse
 import json
 import logging
+import os
+import re
 import sys
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -43,7 +51,7 @@ from review.escalation import (
 from review.grok import GrokAdapter
 from review.packet import DEFAULT_SIZE_CEILING, PacketTooLargeError, tree_state_hash
 from review.verdict import VerdictError
-from review.worktree import IntegrityError, reap_stale_worktrees
+from review.worktree import IntegrityError, process_alive, reap_stale_worktrees
 
 EXIT_ACCEPTED = 0
 EXIT_FAILURE = 1
@@ -52,6 +60,11 @@ EXIT_ESCALATE = 20
 
 STATE_VERSION = 1
 STATE_PATH = Path(".jeltz") / "review" / "state.json"
+
+# `state.json.<pid>.<uuid>.tmp`. The uuid makes the name this write's
+# alone; the pid names the process that owns it, which is what lets
+# cleanup prove a leftover was abandoned instead of guessing from age.
+_STATE_TEMP_NAME = re.compile(rf"{re.escape(STATE_PATH.name)}\.(?P<pid>\d+)\.[0-9a-f]{{32}}\.tmp")
 
 _ADAPTERS = {
     "agy": AgyAdapter,
@@ -218,17 +231,81 @@ def _load_state(repo: Path) -> dict[str, Any] | None:
     return data
 
 
+def _state_temp(path: Path) -> Path:
+    """A temp path for one write: unique to it, and named for its owner.
+
+    Args:
+        path: The state file the temp will be published over.
+
+    Returns:
+        A sibling path matching ``_STATE_TEMP_NAME``.
+    """
+    return path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+
+
+def _reap_state_temps(directory: Path) -> None:
+    """Delete temp files abandoned by writers that are no longer running.
+
+    A killed writer cannot clean up after itself - hook timeouts kill
+    processes outright (R5) - so the next writer does it, on the same
+    terms as ``reap_stale_worktrees``: only files jeltz names this way,
+    and only once the process that owns one is provably gone. A live
+    agent's unpublished write and a stranger's scratch file both look
+    like clutter from here, and neither is ours to delete.
+
+    Args:
+        directory: The state directory to sweep.
+    """
+    for leftover in sorted(directory.iterdir()):
+        owner = _STATE_TEMP_NAME.fullmatch(leftover.name)
+        if owner is None or process_alive(int(owner["pid"])):
+            continue
+        try:
+            leftover.unlink()
+        except OSError as exc:
+            # Cleanup is a courtesy. A path that will not go quietly is
+            # left exactly where it is rather than forced.
+            logger.debug("leaving %s in place: %s", leftover, exc)
+
+
 def write_state(repo: Path, state: dict[str, Any]) -> None:
     """Write review state atomically so readers never see a torn file.
 
     Shared with the stop-gate bridge (T15), which merges its denial
     marker into the same file.
+
+    Several agents may be working in one directory (T32), so the temp
+    file this write publishes from carries a name no other writer can
+    hold. Under a shared name a second writer truncates the first's
+    buffer and renames it away mid-write, which loses one round and
+    tears the other. Creating the file with ``x`` makes that uniqueness
+    proved rather than assumed: the open fails outright if anything -
+    a file, a directory, a symlink - already holds the path, and nothing
+    this write did not create is ever removed.
+
+    Raises:
+        OSError: If the state file cannot be written or published.
+
+    Args:
+        repo: The repository whose review state is being written.
+        state: The state object to record.
     """
     path = repo / STATE_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(state, indent=2) + "\n")
-    tmp.replace(path)
+    _reap_state_temps(path.parent)
+    tmp = _state_temp(path)
+    # Opened outside the try on purpose: an exclusive create that fails
+    # means the path is somebody else's, and the cleanup below must only
+    # ever remove a file this write actually created.
+    handle = tmp.open("x")
+    try:
+        with handle:
+            handle.write(json.dumps(state, indent=2) + "\n")
+        os.replace(tmp, path)
+    finally:
+        # Published or failed, this writer's temp file is this writer's
+        # to remove; leaving it would make the next reap do it later.
+        tmp.unlink(missing_ok=True)
 
 
 def _escalate(repo: Path, escalation: Escalation, history: list[Any]) -> None:

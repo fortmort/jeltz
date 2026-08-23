@@ -171,21 +171,35 @@ another terminal.
 
 - Gather the review evidence first: save the full `make verify` output
   from PHASE 3 and the final commit message to files under
-  `.jeltz/review/` (for example `.jeltz/review/verify.txt` and
-  `.jeltz/review/wip-message.txt`). That directory is excluded from the
-  review's diff and untracked scan, so the verify, message, and response
-  files never dirty the tree under review; any other in-repo location
-  would. The commit message must travel by file: it is arbitrary text,
-  and its backticks, `$(...)`, and quotes would be expanded or mangled
-  by the shell if pasted into a command line.
+  `.jeltz/review/`. That directory is excluded from the review's diff
+  and untracked scan, so the verify, message, and response files never
+  dirty the tree under review; any other in-repo location would.
+
+  Create each evidence file with `mktemp`, which reserves a name no
+  other session can hold:
+
+  `mkdir -p .jeltz/review`
+
+  `verify_file=$(mktemp .jeltz/review/verify.XXXXXXXX)`
+
+  `message_file=$(mktemp .jeltz/review/wip-message.XXXXXXXX)`
+
+  Several agents may be working in this directory at once. Under a
+  fixed name one session's verify output or commit message is handed to
+  another session's reviewer with nothing to signal the swap, and the
+  verdict then judges work that was never under review. The commit
+  message must travel by file for a second reason: it is arbitrary
+  text, and its backticks, `$(...)`, and quotes would be expanded or
+  mangled by the shell if pasted into a command line.
 
 - Start the review by running:
 
-  `review/run.sh --new --todo-ref "<todo-ref>" --wip-message-file <message-file> --verify-output <verify-file>`
+  `review/run.sh --new --todo-ref "<todo-ref>" --wip-message-file "$message_file" --verify-output "$verify_file"`
 
-  where `<todo-ref>` names the TODO item you just completed,
-  `<message-file>` holds the final commit message from PHASE 3
-  byte-for-byte, and `<verify-file>` is the saved `make verify` output.
+  in the same shell, so each flag receives the path `mktemp` reserved
+  above: `<todo-ref>` names the TODO item you just completed,
+  `$message_file` holds the final commit message from PHASE 3
+  byte-for-byte, and `$verify_file` is the saved `make verify` output.
   The orchestrator builds the review packet from exactly these values
   plus the diff - omitting them would hand the reviewer a placeholder
   message and no task to judge the implementation against. It reviews
@@ -203,15 +217,19 @@ another terminal.
   over the verify file, and update the final commit message so it still
   describes the entire task including the review-driven fixes. Save the
   complete reviewer-response output - including the fenced JSON
-  `dispositions` block - to a response file under `.jeltz/review/`; the
-  orchestrator validates that file before dispatch and refuses one
-  without the block. Then resume the same reviewer thread:
+  `dispositions` block - to a response file under `.jeltz/review/`,
+  reserved with `mktemp` like the others; the orchestrator validates
+  that file before dispatch and refuses one without the block.
 
-  `review/run.sh --resume --response-file <response> --wip-message-file <message-file> --verify-output <verify-file>`
+  `response_file=$(mktemp .jeltz/review/response.XXXXXXXX)`
 
-  where the message file now holds the updated commit message - only
-  the TODO ref persists in review state, so the message and the fresh
-  verify evidence must be passed again on every resume.
+  Then resume the same reviewer thread:
+
+  `review/run.sh --resume --response-file "$response_file" --wip-message-file "$message_file" --verify-output "$verify_file"`
+
+  where `$message_file` now holds the updated commit message - only the
+  TODO ref persists in review state, so the message and the fresh verify
+  evidence must be passed again on every resume.
 
 - **Repeat until exit 0 (accepted) or exit 20 (escalated).**
 
