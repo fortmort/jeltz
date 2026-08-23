@@ -16,16 +16,27 @@ Four assistants are in scope: Claude Code, codex, antigravity (`agy`), and
 grok. All four can act as the reviewer, and all four can enforce the gate
 (the "only three" premise fell during T19 - see 3.5).
 
-Status: T1-T20, T22-T27 and T32 complete; the next Phase 5 task in file
-order is T33. T32-T39 (T32-T37 added 2026-08-17 after T20's acceptance,
-T38 during T23, T39 during T24) are Phase 5 work and must land before
-Phase 6. T40-T41 (added 2026-08-22 after T27's fifth review) decide
-whether the installer keeps its current model at all, so T40 must be
-settled before T33 or T34 is started. T21 (documentation) was moved out
-of Phase 4 to the end of Phase 5 on 2026-08-17: it documents
-installation, and installation is rewritten by T23 (uv, now landed), T27
-(install.sh hardening, now landed), T33 (installer ships the engine), and
-T34 (installer wires the gate) - two of which do not exist yet at all.
+Status: T1-T20, T22-T27 and T32 complete. T32-T39 (T32-T37 added
+2026-08-17 after T20's acceptance, T38 during T23, T39 during T24) are
+Phase 5 work and must land before Phase 6. T40-T41 (added 2026-08-22
+after T27's fifth review) decide whether the installer keeps its current
+model at all, and T42-T45 (added 2026-08-23) decide how the engine is
+invoked at all - so both clusters settle before T33 or T34 is started.
+
+Recommended order through the packaging cluster, dependencies first:
+**T44** (prose only, no dependencies, correct any time) -> **T41**
+(removes the last production dependency, which is what opens T42's
+single-file option) -> **T42** (one executable front door) -> **T45**
+(the engine hands the skill its evidence paths) -> **T40** (install
+model, decided knowing what it now installs) -> **T43** (the command
+contract moves onto PATH) -> **T33**, **T34** (what is left of shipping
+the engine and wiring the gate).
+
+T21 (documentation) was moved out of Phase 4 to the end of Phase 5 on
+2026-08-17: it documents installation, and installation is rewritten by
+T23 (uv, now landed), T27 (install.sh hardening, now landed), T33
+(installer ships the engine), T34 (installer wires the gate), and now
+T40-T43 - most of which do not exist yet at all.
 
 ---
 
@@ -2642,6 +2653,11 @@ a create-only one whose cleanup is the user's. If T40 is taken, this task
 keeps its subject - the consumer gets the engine - but loses the
 manifest-stamped repair behaviour below, and its dependency-provisioning
 requirement is answered by T41 rather than by install.sh. Read T40 first.
+NOTE (2026-08-23): T42-T43 propose replacing the vendored `review/` tree
+with one executable on the user's PATH. If they are taken, this task's
+subject narrows again - what a consumer repo needs is the skills and the
+hook wiring, not a copy of the engine - and the "install location is fixed
+by contract" clause below becomes T43's contract move. Read T43 first.
 
 Goal: a consumer repo gets a working `review/run.sh` from install.sh
 alone - consumers do not operate out of the jeltz checkout, and today
@@ -2680,6 +2696,10 @@ a create-only installer the merge into an existing consumer settings file
 is the one place jeltz still writes to a file it did not create. Decide
 there whether the gate wiring is written or merely printed for the user
 to paste. Read T40 first.
+NOTE (2026-08-23): if T42-T43 land, the four shim invocations below become
+one `stop-hook --host <name>` subcommand, and each hook config must carry
+the ABSOLUTE installed path rather than the bare command name - a
+GUI-launched host on macOS does not inherit the shell's PATH. Read T43.
 
 Goal: the Problem B gate is actually installed, not just documented -
 nothing installs the T16-T19 shims' hook configs today (T19 recorded
@@ -2773,6 +2793,12 @@ importable. Four ways to get there:
 - **Remove the dependency (T41) so the question disappears.** Then the
   requirement is `python3` >= 3.11 and nothing else, and the install is a
   pure file copy. This is the recommended pairing - see T41.
+NOTE (2026-08-23): T42-T43 add a fifth way and change what "copy the
+engine" means - a single executable front door, installed into a directory
+the user names on their PATH, which is this task's model applied to one
+file instead of a tree. With T41 done and the zipapp form chosen, the
+install is one file and `--check` is one hash. Decide T40's shape knowing
+T42-T43 are on the table.
 
 Open decision for the user: T33 records a 2026-08-17 direction that "the
 install must install the review scripts and dependencies". The
@@ -2825,6 +2851,242 @@ unchanged, including every `tests/test_verdict.py` case that asserts on
 schema-violation messages; a verdict violating each keyword the schema
 uses is rejected with a message naming the offending field; the engine
 runs on a Python with no third-party packages installed at all.
+
+#### T42. One executable front door for the whole engine
+Goal: every entry point the loop and the gate use is reachable through a
+single executable, so a consumer installs one thing and each host
+allowlists one command instead of five paths.
+
+Facts (2026-08-23 audit, before deciding anything):
+- Five entry points exist: `review/run.sh` (the orchestrator) and the four
+  stop shims `review/{claude,codex,agy,grok}_stop.py`, each of which a host
+  hook config invokes directly - configs nothing installs yet (T34).
+- `review/run.sh` is a POSIX wrapper that resolves the checkout, sets
+  PYTHONPATH, and execs `python3 -c 'from review.run import main'`. It
+  works from any cwd, but only when invoked at its own relative path.
+- Two data files are read through `Path(__file__).resolve().parent`:
+  `verdict.schema.json` (verdict.py:17) and `tool-allowlists.json`
+  (adapter.py:25). The agy adapter passes SCHEMA_PATH to `--json-schema`
+  as a real filesystem path (agy.py:72); codex materializes its derived
+  schema to a temp file already; grok and claude pass JSON inline.
+- There is no `review/__init__.py` and no `review/__main__.py`; `review` is
+  imported as a namespace package off PYTHONPATH.
+
+Form - decide in-task between two, and say which cost was accepted:
+- **Shim plus package directory.** One executable on PATH sets PYTHONPATH
+  to a fixed installed package root and dispatches on argv. No build step,
+  `--check` keeps its per-file hashes, works with today's dependency. The
+  "one executable" is a front door, not a container.
+- **zipapp (PEP 441, stdlib `python -m zipapp`).** One file containing the
+  package, which is what "the entire package as a directly executable
+  script" literally asks for. Two hard prerequisites: **T41 must land
+  first** - `jsonschema` pulls `rpds-py`, a compiled extension that cannot
+  be zipped portably - and both data reads must move to
+  `importlib.resources`, because `__file__` inside a zip is not a real
+  path. The agy adapter then needs its schema materialized to a temp file
+  for the duration of the call; the codex adapter already does exactly
+  that, so the pattern is in the tree. Costs a build step (`make dist`)
+  and introduces an artifact that can go stale against the checkout.
+- Subcommands, not five files: `<cmd> review --new|--resume ...` and
+  `<cmd> stop-hook --host claude|codex|agy|grok`. The four shim modules
+  stay as they are - each is a docstring plus a two-line `main` - and what
+  is new is the dispatcher.
+- `review/run.sh` survives this task as a compatibility wrapper execing the
+  front door, so nothing that hardcodes it breaks here. Moving the contract
+  is T43's job, not this one's.
+Acceptance: the executable, invoked from a directory that is not the
+checkout and with no PYTHONPATH set, completes a `--new`/`--resume` round
+against the scripted backend and answers all four Stop protocols;
+`tests/test_{claude,codex,agy,grok}_stop.py` pass through the new front
+door; the agy adapter still receives a readable schema file path; existing
+`review/run.sh` invocations behave identically; if zipapp is chosen, a test
+asserts the built artifact runs on an interpreter with no third-party
+packages installed, and that a stale artifact is detected rather than run.
+
+#### T43. The command contract moves onto PATH (depends on T40, T42)
+Goal: install the front door where the user's shell already looks, so every
+host allowlists one command name once at user scope instead of a
+repo-relative script path per project.
+
+Why it is worth moving a contract for (2026-08-23 direction): the review
+command is issued by four different assistants, from sessions started in
+arbitrary directories, and each host gates it differently - Claude Code by
+command prefix, agy by `permissions.allow: command(...)`, grok by
+`--tools`. A repo-relative `review/run.sh` is a different string in every
+project, and within one project `review/run.sh`, `./review/run.sh`, and
+`bash review/run.sh` are three different prefixes to allow. It is more
+than friction, because two hosts turn a denial into something that reads
+like success: agy returns `status: "SUCCESS"` with an empty `response`
+and the reason on stderr only (3.4 sharp edge 2), and grok ends the run
+at the first call outside its allowlist with `stopReason: "cancelled"`,
+exit 0, and no stderr (T10 findings). Both were observed headless; both
+are the R1 class.
+- The literal is pinned in three places that must move together:
+  `review.bridge.RECOVERY_INSTRUCTION`, `skills/tdd-phase-loop/SKILL.md`
+  PHASE 4, and the four stop-shim tests asserting the denial reason names
+  the command. `test_review_phase_runs_the_bridge_commands` already joins
+  the first two; keep that join, it is what stops them drifting apart.
+- **Hook configs get the absolute installed path, never the bare name.** A
+  Stop hook is spawned by the host, and a GUI-launched host on macOS does
+  not inherit the shell's PATH. The installer knows where it wrote the file
+  (T40: the user names the directory), so T34's wiring records that path.
+  The bare name belongs only in prose a model reads and runs in a shell.
+- **A PATH install is user scope, and Problem B has to be told.** T33's
+  model vendors the engine into the consumer repo, so a clone carries its
+  own gate; a PATH install does not travel with the clone. That is the same
+  concession T34 already records for codex ("a codex developer is gated
+  only after that user-scope step ... CI (R4) remains the backstop").
+  Decide in-task whether project scope still vendors the engine as well,
+  and if it does not, say so plainly in the entry and in README rather than
+  letting the gate quietly become opt-in.
+- A missing command must be named, not mysterious: a hook whose command is
+  absent fails open by design, so the bridge reason and README both say
+  what to install and where.
+Acceptance: after an install, the review command runs from a subdirectory
+of a consumer repo with no jeltz checkout on disk; the bridge instruction,
+the skill text, and the shim tests all name the same command; the hook
+configs T34 writes carry an absolute path a host with a minimal PATH can
+still execute; README documents the PATH requirement and the remedy when
+the command is missing.
+
+#### T44. PHASE 4 says where the review actually happens
+Goal: the skill's account of PHASE 4 matches the architecture. It reads
+"run the skeptical review loop in this session ... You run that review
+yourself, from inside this same session", which describes the orchestration
+correctly and the review incorrectly - and the difference is the entire
+point of the design.
+
+What is true (2026-08-23):
+- The **review** runs in a **fresh, separate reviewer session**. The
+  adapter spawns a host CLI as a subprocess (D6), in a disposable worktree
+  of the submitted tree (T6), with nothing but the rendered packet as
+  context: WIP message, TODO ref, diff, untracked list, and the last 50
+  lines of `make verify` (`VERIFY_TAIL_LINES`). It cannot see the coding
+  session's conversation - which is precisely why the evidence has to be
+  passed as files at all.
+- **Separate, not necessarily different.** The backend may be a different
+  host or model from the coding session, and the default is codex (D4) -
+  but a codex coding session launching the default backend gets a codex
+  reviewer. What is guaranteed is the separation and the empty context,
+  never a change of vendor; the wording must not claim otherwise.
+- A **re-review is not fresh**: D1 resumes the reviewer's own thread so it
+  judges amended work against its own previous blockers. The accurate
+  statement is "a fresh reviewer session on the first round, that same
+  reviewer's thread on every resume".
+- What genuinely does stay in this session is the **response**: exit 10
+  applies `reviewer-response` here on purpose, because the fixer wants the
+  coder's context (T20).
+- Reword the heading and opening paragraph accordingly: you drive the loop
+  from this session (unchanged and load-bearing - never ask the human to
+  run it, never relay findings through another terminal), the review itself
+  happens in an isolated session you cannot influence, and the response
+  comes back here.
+- Prose only. The four phase-stop literals, the exit-code branching, and
+  the hard constraints stay byte-for-byte.
+Acceptance: no sentence in the skill claims the review runs in the coding
+session or shares its context; both the isolation and the D1 resume
+distinction are stated; the `tests/test_phase_loop_skill.py` assertions
+covering PHASE 4's opening move with it in the same change, with the reason
+recorded; `test_review_phase_runs_the_bridge_commands` still joins the
+skill to the bridge.
+
+#### T45. The engine hands the skill its evidence paths (depends on T42)
+Goal: PHASE 4 instructs commands under one allowlistable prefix instead of
+three, and the review command refuses evidence it did not itself hand out,
+so a skipped allocation fails loudly instead of passing quietly.
+
+What T32 left, and why it is not finished: the skill instructs
+`mkdir -p .jeltz/review` and three `mktemp .jeltz/review/<kind>.XXXXXXXX`
+commands, then passes each printed path to `--verify-output`,
+`--wip-message-file`, and `--response-file`. That is correct, and pinned by
+tests, and it carries two costs T32 did not weigh:
+- **Allowlist surface.** PHASE 4 instructs six command shapes under three
+  prefixes - `mkdir`, `mktemp`, and `review/run.sh` - and prefix-matched
+  allowlists mean three decisions per host, not six. One prefix is still
+  worth having, because this repo has recorded two distinct ways a denial
+  goes quiet: agy returns `status: "SUCCESS"` with an empty `response` and
+  the reason on stderr only (3.4 sharp edge 2), and grok ends the run at
+  the first call outside its allowlist with `stopReason: "cancelled"`,
+  exit 0, and no stderr at all (T10 findings). Both were observed
+  headless, and both are R1-class silent failures. Same argument as T43;
+  land them together.
+- **The guarantee is prose.** `mktemp` reserves a name no other session can
+  hold only if the model actually runs it; nothing stops it writing
+  `.jeltz/review/verify.txt` with its own file tool and passing that
+  instead. A purpose-built script that prints a path does NOT fix this - it
+  is the same instruction wearing a different name. The fix is to move the
+  naming to the side of the boundary that cannot be talked out of it.
+
+Shape, decided in-task, but the reservation half is required and not
+optional - printing a path is ergonomics, and ergonomics was not the
+concern that opened this entry:
+- **Allocate.** One subcommand creates a per-session evidence directory
+  with `mkdir` - create-or-fail, atomic, no follow-a-symlink window, the
+  T27 primitive - e.g. `.jeltz/review/e-<uuid>/`, and prints it. Inside
+  it, a marker file created with `x` (`O_CREAT|O_EXCL`, as `write_state`
+  does) records the reservation, and the three evidence files keep fixed
+  readable basenames because the directory carries the uniqueness.
+- **Redeem.** `--evidence <dir>` REFUSES a directory that does not carry a
+  well-formed marker naming that same directory. A hardcoded
+  `.jeltz/review/e-fixed/` has no marker and is rejected with a message
+  saying which command mints one; a marker copied wholesale into another
+  directory names the wrong path and is rejected too. This is the property
+  the entry claims, and it is the only part of it a model cannot shortcut.
+- **What this does NOT do, stated plainly.** It stops a shortcut, not a
+  forgery: a session that mints a directory and then rewrites the marker,
+  or writes a marker by hand, defeats it, and nothing at this boundary can
+  stop that. It also says nothing about the evidence CONTENTS - the model
+  still authors the verify output and the commit message, exactly as it
+  does today. The claim is bounded to allocation.
+- **Redemption is required of every evidence-bearing invocation, not
+  just the one the skill instructs.** A skill-text pin constrains prose,
+  and this entry has already said prose is not enough; leaving
+  `--verify-output`, `--wip-message-file`, and `--response-file`
+  unrestricted would leave the original bypass open on the same public
+  command. So `--evidence <dir>` is REQUIRED whenever any evidence file is
+  supplied, and an individual flag is accepted only when its path resolves
+  inside that reservation - anything else is the same refusal an unminted
+  directory gets. The three conventional basenames inside the directory
+  are the defaults, so the flags become overrides within a reservation
+  rather than an alternative to one.
+  - Scope of "evidence-bearing": the three file flags. `--wip-message`
+    (inline, default "WIP under review") names no file and cannot collide,
+    so it stays outside the contract.
+  - This keeps direct flag coverage rather than reducing it - T20's
+    hostile-message test still routes a commit message with backticks and
+    `$()` through `--wip-message-file`, and the orchestrator's CLI tests
+    still drive the flags - but their setup must now mint a reservation
+    and place fixture files inside it. **That migration is part of this
+    task and belongs in its entry**, including the tests whose subject is
+    an unreadable or missing evidence file: those must reach the read
+    failure they assert on, not stop at the reservation refusal, so the
+    refusal has to be ordered and tested deliberately rather than
+    discovered.
+  - The skill-text pin stays as well - PHASE 4 instructs `--evidence` and
+    nothing else - but it is now belt on top of braces, not the guarantee.
+- **Considered and rejected: the engine running `make verify` itself.** It
+  would make the verify evidence unforgeable and delete one file, but it
+  re-runs a four-minute build per round, and PHASE 3 must run it anyway to
+  know the tree is green. Note the scale of what is being protected: the
+  packet keeps only the last 50 lines.
+- Cleanup stays out of scope for T32's reason - jeltz cannot prove which
+  session owns an evidence directory, and sweeping another session's files
+  is exactly what the pid rule forbids. A per-session directory at least
+  makes the litter one entry instead of three.
+Acceptance: the review command **rejects an evidence directory it did not
+mint** (no marker) and one carrying a marker minted for a different
+directory, both with a message naming the allocating command, and a test
+covers each; **an evidence flag passed without a reservation is refused,
+and so is one whose path falls outside the reservation given**, each with
+a test - the hardcoded-path bypass must fail on the public command, not
+merely go uninstructed; the skill's PHASE 4 contains no `mkdir`, no
+`mktemp`, and no individual evidence path flag, pinned by a skill test; a
+round driven by exactly the commands the skill instructs completes against
+the scripted backend; the allocating subcommand refuses rather than reuses
+when its directory already exists, and two consecutive calls yield two
+directories; every pre-existing CLI test that drove an evidence flag still
+asserts what it asserted before, through a reservation; the entry records
+the bounded claim above - shortcuts are refused, forgeries are not.
 
 #### T35. Fix the recursive `make test` re-execution; profile the rest
 Goal: suite wall time proportionate to its size; today ~220s for ~395
